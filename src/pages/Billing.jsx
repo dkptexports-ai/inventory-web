@@ -1,58 +1,132 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
+import { getPendingChallans, markAsBilled } from '../lib/api';
 
 const Billing = () => {
+  const [challans, setChallans] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [search, setSearch] = useState('');
+  
+  // A simple state for popup
+  const [activeInvoice, setActiveInvoice] = useState(null);
+  const [invoiceNo, setInvoiceNo] = useState('');
+
+  useEffect(() => {
+    loadChallans();
+  }, []);
+
+  async function loadChallans() {
+    try {
+      const data = await getPendingChallans();
+      // Filter out zero outward qty if billing is based on outward
+      setChallans(data.filter(t => t.outward_qty > 0));
+    } catch (err) {
+      console.error(err);
+    }
+  }
+
+  const handleMarkBilled = async () => {
+    if (!activeInvoice || !invoiceNo) return;
+    try {
+      setLoading(true);
+      await markAsBilled(activeInvoice.id, invoiceNo);
+      setActiveInvoice(null);
+      setInvoiceNo('');
+      loadChallans();
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const filteredChallans = challans.filter(c => 
+    c.challan_no?.toLowerCase().includes(search.toLowerCase()) ||
+    c.styles?.name.toLowerCase().includes(search.toLowerCase())
+  );
+
   return (
     <div>
       <header className="page-header">
         <h1 className="page-title">Billing & Invoices</h1>
-        <button className="btn btn-primary">Generate Invoice</button>
       </header>
       
+      {activeInvoice && (
+        <div style={{
+          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, 
+          background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100
+        }}>
+          <div className="glass-card" style={{ width: '400px' }}>
+            <h2>Generate Bill</h2>
+            <p style={{ margin: '1rem 0', color: 'var(--text-muted)' }}>
+              Mark Challan <b>{activeInvoice.challan_no}</b> as Billed.
+            </p>
+            <div className="input-group">
+              <label className="input-label">Invoice Number</label>
+              <input 
+                type="text" 
+                className="input-field" 
+                value={invoiceNo}
+                onChange={e => setInvoiceNo(e.target.value)}
+                placeholder="INV-XXXX"
+              />
+            </div>
+            <div style={{ display: 'flex', gap: '1rem', marginTop: '1.5rem' }}>
+              <button className="btn btn-primary" onClick={handleMarkBilled} disabled={loading || !invoiceNo}>
+                {loading ? 'Saving...' : 'Confirm'}
+              </button>
+              <button className="btn btn-secondary" onClick={() => setActiveInvoice(null)}>Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="glass-card" style={{ padding: 0, overflow: 'hidden' }}>
         <div style={{ padding: '1.5rem', borderBottom: '1px solid var(--border-color)', display: 'flex', gap: '1rem' }}>
-          <input type="text" className="input-field" placeholder="Search Challan No..." style={{ maxWidth: '300px' }} />
-          <select className="input-field" style={{ maxWidth: '200px' }}>
-            <option>All Status</option>
-            <option>Pending</option>
-            <option>Billed</option>
-          </select>
+          <input 
+            type="text" 
+            className="input-field" 
+            placeholder="Search Challan or Style..." 
+            style={{ maxWidth: '300px' }}
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+          />
         </div>
         
         <div className="table-container" style={{ border: 'none', borderRadius: 0 }}>
           <table>
             <thead>
               <tr>
+                <th>Date</th>
                 <th>Challan No.</th>
                 <th>Vendor</th>
                 <th>Style</th>
-                <th>Total Out Qty</th>
-                <th>Invoice No.</th>
-                <th>Amount</th>
-                <th>Status</th>
+                <th>Out Qty</th>
                 <th>Action</th>
               </tr>
             </thead>
             <tbody>
-              <tr>
-                <td>CH-1002</td>
-                <td>AMAN EMBROIDERY</td>
-                <td>HOW LUCKY ARE WE</td>
-                <td>1006</td>
-                <td>-</td>
-                <td>-</td>
-                <td><span className="badge badge-warning">Pending</span></td>
-                <td><button className="btn btn-secondary" style={{ padding: '0.25rem 0.75rem', fontSize: '0.75rem' }}>Mark Billed</button></td>
-              </tr>
-              <tr>
-                <td>CH-0985</td>
-                <td>Aman Ashoka</td>
-                <td>Ashoka 60x61</td>
-                <td>466</td>
-                <td>INV-2026-001</td>
-                <td>₹12,500</td>
-                <td><span className="badge badge-success">Billed</span></td>
-                <td><button className="btn btn-secondary" style={{ padding: '0.25rem 0.75rem', fontSize: '0.75rem' }}>View</button></td>
-              </tr>
+              {filteredChallans.length === 0 ? (
+                <tr><td colSpan="6" style={{ textAlign: 'center' }}>No pending bills found.</td></tr>
+              ) : (
+                filteredChallans.map(c => (
+                  <tr key={c.id}>
+                    <td>{new Date(c.created_at).toLocaleDateString()}</td>
+                    <td>{c.challan_no || '-'}</td>
+                    <td>{c.styles?.vendors?.name}</td>
+                    <td>{c.styles?.name}</td>
+                    <td>{c.outward_qty}</td>
+                    <td>
+                      <button 
+                        className="btn btn-secondary" 
+                        style={{ padding: '0.25rem 0.75rem', fontSize: '0.75rem' }}
+                        onClick={() => setActiveInvoice(c)}
+                      >
+                        Generate Bill
+                      </button>
+                    </td>
+                  </tr>
+                ))
+              )}
             </tbody>
           </table>
         </div>

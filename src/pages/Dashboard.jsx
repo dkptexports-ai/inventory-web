@@ -1,15 +1,34 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { Package, Users, FileText, ArrowRightLeft } from 'lucide-react';
+import { getDashboardStats, getRecentTransactions } from '../lib/api';
+import { Link } from 'react-router-dom';
 
 const Dashboard = () => {
+  const [stats, setStats] = useState({ vendors: 0, styles: 0, pendingBills: 0 });
+  const [recent, setRecent] = useState([]);
+
+  useEffect(() => {
+    async function loadData() {
+      try {
+        const s = await getDashboardStats();
+        setStats(s);
+        const r = await getRecentTransactions(5);
+        setRecent(r);
+      } catch (err) {
+        console.error(err);
+      }
+    }
+    loadData();
+  }, []);
+
   return (
     <div>
       <header className="page-header">
         <h1 className="page-title">Dashboard Overview</h1>
-        <button className="btn btn-primary">
+        <Link to="/transactions" className="btn btn-primary" style={{ textDecoration: 'none' }}>
           <ArrowRightLeft size={16} />
           New Transaction
-        </button>
+        </Link>
       </header>
 
       <div className="dashboard-grid">
@@ -19,7 +38,7 @@ const Dashboard = () => {
           </div>
           <div className="stat-info">
             <h3>Total Styles</h3>
-            <p>128</p>
+            <p>{stats.styles}</p>
           </div>
         </div>
         
@@ -29,7 +48,7 @@ const Dashboard = () => {
           </div>
           <div className="stat-info">
             <h3>Active Vendors</h3>
-            <p>45</p>
+            <p>{stats.vendors}</p>
           </div>
         </div>
         
@@ -39,7 +58,7 @@ const Dashboard = () => {
           </div>
           <div className="stat-info">
             <h3>Pending Bills</h3>
-            <p>12</p>
+            <p>{stats.pendingBills}</p>
           </div>
         </div>
       </div>
@@ -55,40 +74,32 @@ const Dashboard = () => {
                 <th>Vendor</th>
                 <th>Style</th>
                 <th>Challan No.</th>
-                <th>Inward Qty</th>
-                <th>Outward Qty</th>
-                <th>Balance</th>
+                <th>IN</th>
+                <th>OUT</th>
                 <th>Status</th>
               </tr>
             </thead>
             <tbody>
-              <tr>
-                <td>AMAN EMBROIDERY</td>
-                <td>HOW LUCKY ARE WE (RAJ)</td>
-                <td>CH-1002</td>
-                <td>1006</td>
-                <td>500</td>
-                <td><span style={{ color: 'var(--success)' }}>506</span></td>
-                <td><span className="badge badge-warning">Pending</span></td>
-              </tr>
-              <tr>
-                <td>Aman Ashoka</td>
-                <td>Ashoka 60x61</td>
-                <td>CH-0985</td>
-                <td>466</td>
-                <td>466</td>
-                <td>0</td>
-                <td><span className="badge badge-success">Billed</span></td>
-              </tr>
-              <tr>
-                <td>Cra Tree</td>
-                <td>CRA-55</td>
-                <td>CH-1044</td>
-                <td>200</td>
-                <td>0</td>
-                <td><span style={{ color: 'var(--success)' }}>200</span></td>
-                <td><span className="badge badge-neutral">In Process</span></td>
-              </tr>
+              {recent.length === 0 ? (
+                <tr><td colSpan="6" style={{ textAlign: 'center' }}>No records found</td></tr>
+              ) : (
+                recent.map(t => (
+                  <tr key={t.id}>
+                    <td>{t.styles?.vendors?.name}</td>
+                    <td>{t.styles?.name}</td>
+                    <td>{t.challan_no || '-'}</td>
+                    <td>{t.inward_qty}</td>
+                    <td>{t.outward_qty}</td>
+                    <td>
+                      {t.bill_status === 'Pending' ? (
+                        <span className="badge badge-warning">Pending</span>
+                      ) : (
+                        <span className="badge badge-success">Billed</span>
+                      )}
+                    </td>
+                  </tr>
+                ))
+              )}
             </tbody>
           </table>
         </div>
