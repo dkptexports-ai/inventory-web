@@ -1,15 +1,12 @@
 import React from 'react';
 import { NavLink } from 'react-router-dom';
-import { LayoutDashboard, ArrowRightLeft, FileText, Settings } from 'lucide-react';
+import { LayoutDashboard, ArrowRightLeft, FileText, Settings, Users, Package } from 'lucide-react';
 
 const Sidebar = () => {
   return (
     <aside className="sidebar">
       <div className="sidebar-logo">
-        <div style={{ background: 'var(--accent-primary)', padding: '0.5rem', borderRadius: '0.5rem' }}>
-          <LayoutDashboard size={20} color="#fff" />
-        </div>
-        InventoryPro
+        <img src="/logo.png" alt="DKPT" className="brand-logo" />
       </div>
       
       <nav className="sidebar-nav">
@@ -19,6 +16,30 @@ const Sidebar = () => {
         >
           <LayoutDashboard size={18} />
           Dashboard
+        </NavLink>
+
+        <NavLink 
+          to="/styles" 
+          className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}
+        >
+          <Package size={18} />
+          Styles
+        </NavLink>
+        
+        <NavLink 
+          to="/vendors" 
+          className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}
+        >
+          <Users size={18} />
+          Vendors
+        </NavLink>
+
+        <NavLink 
+          to="/master" 
+          className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}
+        >
+          <Settings size={18} />
+          Master Data
         </NavLink>
         
         <NavLink 

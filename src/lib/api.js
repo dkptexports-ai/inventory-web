@@ -7,6 +7,13 @@ export async function getVendors() {
   return data;
 }
 
+export async function addVendor(name, place = '') {
+  if (!name) throw new Error("Vendor name is required");
+  const { data, error } = await supabase.from('vendors').insert([{ name, place }]).select().single();
+  if (error) throw error;
+  return data;
+}
+
 // Styles
 export async function getStyles(vendorId = null) {
   let query = supabase.from('styles').select('*, vendors(name)');
@@ -14,6 +21,13 @@ export async function getStyles(vendorId = null) {
     query = query.eq('vendor_id', vendorId);
   }
   const { data, error } = await query.order('name');
+  if (error) throw error;
+  return data;
+}
+
+export async function addStyle(name, vendor_id, unit = 'PCS') {
+  if (!name || !vendor_id) throw new Error("Style name and Vendor are required");
+  const { data, error } = await supabase.from('styles').insert([{ name, vendor_id, unit }]).select().single();
   if (error) throw error;
   return data;
 }
@@ -41,9 +55,56 @@ export async function getRecentTransactions(limit = 10) {
 }
 
 export async function addTransaction(payload) {
-  const { error } = await supabase.from('transactions').insert([payload]);
+  // If payload is an array (multi-insert), insert all
+  const dataToInsert = Array.isArray(payload) ? payload : [payload];
+  const { error } = await supabase.from('transactions').insert(dataToInsert);
   if (error) throw error;
   return true;
+}
+
+export async function getNextBatchNumber(styleId) {
+  if (!styleId) return '';
+  
+  const now = new Date();
+  const monthNames = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"];
+  const currentMonthStr = monthNames[now.getMonth()];
+  const prefix = `B-${currentMonthStr}-`;
+  
+  // Get the latest transaction for this style in the current month with a batch number
+  const { data, error } = await supabase.from('transactions')
+    .select('batch_no')
+    .eq('style_id', styleId)
+    .like('batch_no', `${prefix}%`)
+    .order('created_at', { ascending: false })
+    .limit(1);
+    
+  if (error) {
+    console.error("Error fetching batch no", error);
+    return `${prefix}01`;
+  }
+  
+  if (data && data.length > 0 && data[0].batch_no) {
+    const lastBatch = data[0].batch_no;
+    const parts = lastBatch.split('-');
+    if (parts.length === 3) {
+      const lastNum = parseInt(parts[2], 10);
+      if (!isNaN(lastNum)) {
+        const nextNum = lastNum + 1;
+        return `${prefix}${nextNum.toString().padStart(2, '0')}`;
+      }
+    }
+  }
+  
+  return `${prefix}01`;
+}
+
+export async function getStyleLedger(styleId) {
+  const { data, error } = await supabase.from('transactions')
+    .select('*, styles(name, vendors(name))')
+    .eq('style_id', styleId)
+    .order('created_at', { ascending: true }); // Ascending for running balance calculation
+  if (error) throw error;
+  return data;
 }
 
 export async function getDashboardStats() {

@@ -1,17 +1,18 @@
 import React, { useState, useEffect } from 'react';
-import { getVendors, ensureStyle, addTransaction, getRecentTransactions } from '../lib/api';
+import { getVendors, getStyles, ensureStyle, addTransaction, getRecentTransactions, getNextBatchNumber } from '../lib/api';
+import { Plus, Trash2, Save } from 'lucide-react';
 
 const Transactions = () => {
   const [vendors, setVendors] = useState([]);
+  const [styles, setStyles] = useState([]);
   const [recent, setRecent] = useState([]);
   
-  const [formData, setFormData] = useState({
-    vendor_id: '',
-    styleName: '',
-    challan_no: '',
-    inward_qty: '',
-    outward_qty: ''
-  });
+  const [vendorName, setVendorName] = useState('');
+  const [challanNo, setChallanNo] = useState('');
+  
+  const [items, setItems] = useState([
+    { id: 1, styleName: '', batch_no: '', inward_qty: '', outward_qty: '' }
+  ]);
   
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -25,6 +26,8 @@ const Transactions = () => {
     try {
       const v = await getVendors();
       setVendors(v);
+      const s = await getStyles();
+      setStyles(s);
       const r = await getRecentTransactions();
       setRecent(r);
     } catch (err) {
@@ -32,31 +35,102 @@ const Transactions = () => {
     }
   }
 
+  const handleStyleChange = async (index, newStyleName) => {
+    const newItems = [...items];
+    newItems[index].styleName = newStyleName;
+    setItems(newItems);
+
+    // Auto-generate batch no
+    if (newStyleName.length > 2) {
+      const existingStyle = styles.find(s => s.name.toLowerCase() === newStyleName.toLowerCase());
+      if (existingStyle) {
+        const nextBatch = await getNextBatchNumber(existingStyle.id);
+        const updatedItems = [...newItems];
+        updatedItems[index].batch_no = nextBatch;
+        setItems(updatedItems);
+      }
+    }
+  };
+
+  const updateItem = (index, field, value) => {
+    const newItems = [...items];
+    newItems[index][field] = value;
+    setItems(newItems);
+  };
+
+  const addItem = () => {
+    setItems([...items, { id: Date.now(), styleName: '', batch_no: '', inward_qty: '', outward_qty: '' }]);
+  };
+
+  const handleKeyDown = (e, index) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      addItem();
+      // Need a slight delay to focus the newly created input
+      setTimeout(() => {
+        const inputs = document.querySelectorAll('.style-input');
+        if (inputs && inputs.length > index + 1) {
+          inputs[index + 1].focus();
+        }
+      }, 50);
+    }
+  };
+
+  const removeItem = (index) => {
+    const newItems = items.filter((_, i) => i !== index);
+    if (newItems.length === 0) {
+      setItems([{ id: Date.now(), styleName: '', batch_no: '', inward_qty: '', outward_qty: '' }]);
+    } else {
+      setItems(newItems);
+    }
+  };
+
   const handleSave = async () => {
     try {
       setLoading(true);
       setError(null);
       setSuccess(false);
       
-      if (!formData.vendor_id || !formData.styleName) {
-        throw new Error("Vendor and Style are required");
+      if (!vendorName) {
+        throw new Error("Customer / Vendor is required");
       }
       
-      // Get or create style
-      const styleId = await ensureStyle(formData.styleName, formData.vendor_id);
+      const validItems = items.filter(i => i.styleName && (Number(i.inward_qty) > 0 || Number(i.outward_qty) > 0));
+      if (validItems.length === 0) {
+        throw new Error("Please add at least one valid item with quantity");
+      }
       
-      // Save transaction
-      await addTransaction({
-        style_id: styleId,
-        challan_no: formData.challan_no,
-        inward_qty: Number(formData.inward_qty) || 0,
-        outward_qty: Number(formData.outward_qty) || 0,
-        date: new Date().toISOString()
-      });
+      let vendor_id = null;
+      const existingVendor = vendors.find(v => v.name.toLowerCase() === vendorName.toLowerCase());
+      if (existingVendor) {
+        vendor_id = existingVendor.id;
+      } else {
+        throw new Error("Please select an existing Customer from Master Data");
+      }
+
+      const transactionsToInsert = [];
+      const dateIso = new Date().toISOString();
+
+      for (const item of validItems) {
+        const styleId = await ensureStyle(item.styleName, vendor_id);
+        transactionsToInsert.push({
+          style_id: styleId,
+          challan_no: challanNo,
+          batch_no: item.batch_no || null,
+          inward_qty: Number(item.inward_qty) || 0,
+          outward_qty: Number(item.outward_qty) || 0,
+          date: dateIso
+        });
+      }
+      
+      await addTransaction(transactionsToInsert);
       
       setSuccess(true);
-      setFormData({ ...formData, styleName: '', challan_no: '', inward_qty: '', outward_qty: '' });
-      loadInitialData(); // reload table
+      // Reset form
+      setVendorName('');
+      setChallanNo('');
+      setItems([{ id: Date.now(), styleName: '', batch_no: '', inward_qty: '', outward_qty: '' }]);
+      loadInitialData();
     } catch (err) {
       setError(err.message);
     } finally {
@@ -67,118 +141,147 @@ const Transactions = () => {
   return (
     <div>
       <header className="page-header">
-        <h1 className="page-title">Transaction Manager</h1>
+        <h1 className="page-title">Transaction Manager (Multi-Entry)</h1>
       </header>
       
-      <div className="dashboard-grid" style={{ gridTemplateColumns: '1fr 2fr' }}>
-        <div className="glass-card">
-          <h2 style={{ marginBottom: '1.5rem', fontSize: '1.125rem' }}>Add New Entry</h2>
-          
-          {error && <div style={{ color: 'var(--danger)', marginBottom: '1rem', fontSize: '0.875rem' }}>{error}</div>}
-          {success && <div style={{ color: 'var(--success)', marginBottom: '1rem', fontSize: '0.875rem' }}>Transaction saved successfully!</div>}
-          
+      <div className="glass-card" style={{ marginBottom: '2rem' }}>
+        <h2 style={{ marginBottom: '1.5rem', fontSize: '1.125rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          <span style={{ color: 'var(--accent-primary)' }}>New Challan Entry</span>
+        </h2>
+        
+        {error && <div style={{ color: 'var(--danger)', marginBottom: '1rem', fontSize: '0.875rem', padding: '0.5rem', background: 'rgba(248,81,73,0.1)', borderRadius: '4px' }}>{error}</div>}
+        {success && <div style={{ color: 'var(--success)', marginBottom: '1rem', fontSize: '0.875rem', padding: '0.5rem', background: 'rgba(46,160,67,0.1)', borderRadius: '4px' }}>Transactions saved successfully!</div>}
+        
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem', marginBottom: '2rem' }}>
           <div className="input-group">
-            <label className="input-label">Select Vendor</label>
-            <select 
-              className="input-field" 
-              style={{ appearance: 'none', backgroundColor: 'var(--bg-main)' }}
-              value={formData.vendor_id}
-              onChange={(e) => setFormData({...formData, vendor_id: e.target.value})}
-            >
-              <option value="">Select Vendor...</option>
-              {vendors.map(v => (
-                <option key={v.id} value={v.id}>{v.name}</option>
-              ))}
-            </select>
-          </div>
-          
-          <div className="input-group">
-            <label className="input-label">Style / Product</label>
+            <label className="input-label">Select Customer / Vendor *</label>
             <input 
-              type="text" 
+              list="vendors-list"
               className="input-field" 
-              placeholder="E.g., A Lucky or Type new style..." 
-              value={formData.styleName}
-              onChange={(e) => setFormData({...formData, styleName: e.target.value})}
+              placeholder="Type to search customer..."
+              value={vendorName}
+              onChange={(e) => setVendorName(e.target.value)}
             />
+            <datalist id="vendors-list">
+              {vendors.map(v => (
+                <option key={v.id} value={v.name} />
+              ))}
+            </datalist>
           </div>
-          
           <div className="input-group">
             <label className="input-label">Challan Number</label>
             <input 
               type="text" 
               className="input-field" 
               placeholder="CH-XXXX" 
-              value={formData.challan_no}
-              onChange={(e) => setFormData({...formData, challan_no: e.target.value})}
+              value={challanNo}
+              onChange={(e) => setChallanNo(e.target.value)}
             />
           </div>
-          
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
-            <div className="input-group">
-              <label className="input-label">Inward (IN)</label>
-              <input 
-                type="number" 
-                className="input-field" 
-                placeholder="0" 
-                value={formData.inward_qty}
-                onChange={(e) => setFormData({...formData, inward_qty: e.target.value})}
-              />
-            </div>
-            <div className="input-group">
-              <label className="input-label">Outward (OUT)</label>
-              <input 
-                type="number" 
-                className="input-field" 
-                placeholder="0" 
-                value={formData.outward_qty}
-                onChange={(e) => setFormData({...formData, outward_qty: e.target.value})}
-              />
-            </div>
+        </div>
+
+        <div className="items-list" style={{ border: '1px solid var(--border-color)', borderRadius: '0.5rem', padding: '1rem', background: 'rgba(0,0,0,0.2)' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '3fr 2fr 1.5fr 1.5fr 0.5fr', gap: '1rem', marginBottom: '0.5rem' }}>
+            <label className="input-label">Style / Product *</label>
+            <label className="input-label">Batch No / Lot No</label>
+            <label className="input-label">IN (Qty)</label>
+            <label className="input-label">OUT (Qty)</label>
+            <label></label>
           </div>
           
-          <button 
-            className="btn btn-primary" 
-            style={{ width: '100%', marginTop: '1rem' }}
-            onClick={handleSave}
-            disabled={loading}
-          >
-            {loading ? 'Saving...' : 'Save Transaction'}
+          {items.map((item, index) => (
+            <div key={item.id} style={{ display: 'grid', gridTemplateColumns: '3fr 2fr 1.5fr 1.5fr 0.5fr', gap: '1rem', marginBottom: '1rem', alignItems: 'center' }}>
+              <input 
+                list="styles-list"
+                type="text" 
+                className="input-field style-input" 
+                placeholder="Style Name..." 
+                value={item.styleName}
+                onChange={(e) => handleStyleChange(index, e.target.value)}
+              />
+              <input 
+                type="text" 
+                className="input-field" 
+                placeholder="Auto-gen or type..." 
+                value={item.batch_no}
+                onChange={(e) => updateItem(index, 'batch_no', e.target.value)}
+              />
+              <input 
+                type="number" 
+                className="input-field" 
+                placeholder="0" 
+                value={item.inward_qty}
+                onChange={(e) => updateItem(index, 'inward_qty', e.target.value)}
+                onKeyDown={(e) => handleKeyDown(e, index)}
+              />
+              <input 
+                type="number" 
+                className="input-field" 
+                placeholder="0" 
+                value={item.outward_qty}
+                onChange={(e) => updateItem(index, 'outward_qty', e.target.value)}
+                onKeyDown={(e) => handleKeyDown(e, index)}
+              />
+              <button className="btn btn-secondary" style={{ padding: '0.5rem', color: 'var(--danger)' }} onClick={() => removeItem(index)}>
+                <Trash2 size={18} />
+              </button>
+            </div>
+          ))}
+          <datalist id="styles-list">
+            {styles.map(s => (
+              <option key={s.id} value={s.name} />
+            ))}
+          </datalist>
+
+          <button className="btn btn-secondary" style={{ marginTop: '0.5rem', fontSize: '0.75rem', padding: '0.5rem 1rem' }} onClick={addItem}>
+            <Plus size={14} /> Add Another Item
           </button>
         </div>
         
-        <div className="glass-card" style={{ padding: 0, overflow: 'hidden' }}>
-          <div style={{ padding: '1.5rem', borderBottom: '1px solid var(--border-color)' }}>
-            <h2 style={{ fontSize: '1.125rem' }}>Recent Activity</h2>
-          </div>
-          <div className="table-container" style={{ border: 'none', borderRadius: 0 }}>
-            <table>
-              <thead>
-                <tr>
-                  <th>Date</th>
-                  <th>Challan</th>
-                  <th>Style</th>
-                  <th>IN</th>
-                  <th>OUT</th>
-                </tr>
-              </thead>
-              <tbody>
-                {recent.length === 0 ? (
-                  <tr><td colSpan="5" style={{ textAlign: 'center' }}>No recent activity</td></tr>
-                ) : (
-                  recent.map(t => (
-                    <tr key={t.id}>
-                      <td>{new Date(t.created_at).toLocaleDateString()}</td>
-                      <td>{t.challan_no || '-'}</td>
-                      <td>{t.styles?.name}</td>
-                      <td>{t.inward_qty > 0 ? <span className="badge badge-success">{t.inward_qty}</span> : '-'}</td>
-                      <td>{t.outward_qty > 0 ? <span className="badge badge-danger">{t.outward_qty}</span> : '-'}</td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
+        <div style={{ marginTop: '2rem', display: 'flex', justifyContent: 'flex-end' }}>
+          <button 
+            className="btn btn-primary" 
+            onClick={handleSave}
+            disabled={loading}
+          >
+            <Save size={18} /> {loading ? 'Saving...' : 'Save All Transactions'}
+          </button>
+        </div>
+      </div>
+      
+      <div className="glass-card" style={{ padding: 0, overflow: 'hidden' }}>
+        <div style={{ padding: '1.5rem', borderBottom: '1px solid var(--border-color)' }}>
+          <h2 style={{ fontSize: '1.125rem' }}>Recent Activity</h2>
+        </div>
+        <div className="table-container" style={{ border: 'none', borderRadius: 0 }}>
+          <table>
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>Challan</th>
+                <th>Batch</th>
+                <th>Style</th>
+                <th>IN</th>
+                <th>OUT</th>
+              </tr>
+            </thead>
+            <tbody>
+              {recent.length === 0 ? (
+                <tr><td colSpan="6" style={{ textAlign: 'center' }}>No recent activity</td></tr>
+              ) : (
+                recent.map(t => (
+                  <tr key={t.id}>
+                    <td>{new Date(t.created_at).toLocaleDateString()}</td>
+                    <td>{t.challan_no || '-'}</td>
+                    <td><span className="badge badge-neutral">{t.batch_no || '-'}</span></td>
+                    <td>{t.styles?.name}</td>
+                    <td>{t.inward_qty > 0 ? <span className="badge badge-success">{t.inward_qty}</span> : '-'}</td>
+                    <td>{t.outward_qty > 0 ? <span className="badge badge-danger">{t.outward_qty}</span> : '-'}</td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
         </div>
       </div>
     </div>

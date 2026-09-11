@@ -21,6 +21,7 @@ CREATE TABLE IF NOT EXISTS transactions (
   style_id UUID REFERENCES styles(id) ON DELETE CASCADE,
   date DATE,
   challan_no TEXT,
+  batch_no TEXT,
   size TEXT,
   inward_qty NUMERIC DEFAULT 0,
   outward_qty NUMERIC DEFAULT 0,
