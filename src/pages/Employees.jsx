@@ -108,7 +108,7 @@ const Employees = () => {
         loadEmployees();
       } catch (err) {
         console.error(err);
-        alert('Failed to delete employee. They might be linked to existing attendance or salary records.');
+        alert(err.message || 'Failed to delete employee. They might be linked to existing attendance or salary records.');
       }
     }
   };

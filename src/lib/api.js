@@ -161,6 +161,20 @@ export async function updateEmployee(id, payload) {
 }
 
 export async function deleteEmployee(id) {
+  // Check for existing attendance
+  const { data: attData, error: attErr } = await supabase.from('attendance').select('id').eq('employee_id', id).limit(1);
+  if (attErr) throw attErr;
+  if (attData && attData.length > 0) {
+    throw new Error("Cannot delete employee: Attendance records exist.");
+  }
+
+  // Check for existing salary payments
+  const { data: salData, error: salErr } = await supabase.from('salary_payments').select('id').eq('employee_id', id).limit(1);
+  if (salErr) throw salErr;
+  if (salData && salData.length > 0) {
+    throw new Error("Cannot delete employee: Salary payment records exist.");
+  }
+
   const { error } = await supabase.from('employees').delete().eq('id', id);
   if (error) throw error;
   return true;
