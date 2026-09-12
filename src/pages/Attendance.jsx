@@ -167,9 +167,16 @@ const Attendance = () => {
   };
 
   const filteredEmployeesGrid = employees.filter(emp => {
-    if (!filterCompanyId) return true;
-    // Check if they have ANY attendance in the loaded data for the selected company
-    return Object.values(attendanceData).some(a => a.employee_id === emp.id && a.company_id === filterCompanyId);
+    if (filterCompanyId) {
+      // Check if they have ANY attendance in the loaded data for the selected company
+      return Object.values(attendanceData).some(a => a.employee_id === emp.id && a.company_id === filterCompanyId);
+    }
+    
+    const hasData = Object.values(attendanceData).some(a => a.employee_id === emp.id);
+    const hasBalance = (emp.opening_balance || 0) !== 0;
+    
+    // User requested: "agar kuch bhi balance ya data aa raha hai to wo employee only show karega"
+    return hasData || hasBalance;
   });
 
   const filteredEmployeesDaily = employees.filter(emp => {

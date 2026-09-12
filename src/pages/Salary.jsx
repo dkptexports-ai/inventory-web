@@ -146,6 +146,13 @@ const Salary = () => {
       const computed = employees.map(emp => {
         const empAtt = (allAtt || []).filter(a => a.employee_id === emp.id);
         if (filterCompanyId && empAtt.length === 0) return null; // Hide if they didn't work here
+        
+        const hasData = empAtt.length > 0;
+        const hasBalance = (emp.opening_balance || 0) !== 0;
+        
+        // Hide employee if they have no attendance data this month AND no opening balance
+        if (!hasData && !hasBalance) return null;
+
         return calculateForEmployee(emp, empAtt);
       }).filter(Boolean);
       
