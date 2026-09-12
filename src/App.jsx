@@ -1,5 +1,5 @@
-import React from 'react';
-import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
+import React, { useState } from 'react';
+import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import Sidebar from './components/Sidebar';
 import Dashboard from './pages/Dashboard';
 import Transactions from './pages/Transactions';
@@ -8,21 +8,44 @@ import Styles from './pages/Styles';
 import StyleLedger from './pages/StyleLedger';
 import Vendors from './pages/Vendors';
 import MasterData from './pages/MasterData';
+import Login from './pages/Login';
+import Employees from './pages/Employees';
+import Attendance from './pages/Attendance';
+import Salary from './pages/Salary';
 
 function App() {
+  // Simplified auth state for now
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+
+  const handleLogin = () => {
+    setIsAuthenticated(true);
+  };
+
+  const handleLogout = () => {
+    setIsAuthenticated(false);
+  };
+
+  if (!isAuthenticated) {
+    return <Login onLogin={handleLogin} />;
+  }
+
   return (
     <Router>
       <div className="app-container">
-        <Sidebar />
+        <Sidebar onLogout={handleLogout} />
         <main className="main-content">
           <Routes>
             <Route path="/" element={<Dashboard />} />
+            <Route path="/employees" element={<Employees />} />
+            <Route path="/attendance" element={<Attendance />} />
+            <Route path="/salary" element={<Salary />} />
             <Route path="/transactions" element={<Transactions />} />
             <Route path="/billing" element={<Billing />} />
             <Route path="/styles" element={<Styles />} />
             <Route path="/styles/:id" element={<StyleLedger />} />
             <Route path="/vendors" element={<Vendors />} />
             <Route path="/master" element={<MasterData />} />
+            <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </main>
       </div>

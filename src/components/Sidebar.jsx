@@ -1,8 +1,8 @@
 import React from 'react';
 import { NavLink } from 'react-router-dom';
-import { LayoutDashboard, ArrowRightLeft, FileText, Settings, Users, Package } from 'lucide-react';
+import { LayoutDashboard, ArrowRightLeft, FileText, Settings, Users, Package, CalendarDays, IndianRupee, LogOut } from 'lucide-react';
 
-const Sidebar = () => {
+const Sidebar = ({ onLogout }) => {
   return (
     <aside className="sidebar">
       <div className="sidebar-logo">
@@ -24,6 +24,30 @@ const Sidebar = () => {
         >
           <Package size={18} />
           Styles
+        </NavLink>
+        
+        <NavLink 
+          to="/employees" 
+          className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}
+        >
+          <Users size={18} />
+          Employees
+        </NavLink>
+
+        <NavLink 
+          to="/attendance" 
+          className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}
+        >
+          <CalendarDays size={18} />
+          Attendance
+        </NavLink>
+
+        <NavLink 
+          to="/salary" 
+          className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}
+        >
+          <IndianRupee size={18} />
+          Salary
         </NavLink>
         
         <NavLink 
@@ -59,10 +83,14 @@ const Sidebar = () => {
         </NavLink>
       </nav>
       
-      <div style={{ marginTop: 'auto' }}>
+      <div style={{ marginTop: 'auto', display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
         <button className="nav-item" style={{ width: '100%', background: 'transparent', border: 'none', cursor: 'pointer', textAlign: 'left' }}>
           <Settings size={18} />
           Settings
+        </button>
+        <button onClick={onLogout} className="nav-item" style={{ width: '100%', background: 'transparent', border: 'none', cursor: 'pointer', textAlign: 'left', color: 'var(--danger)' }}>
+          <LogOut size={18} />
+          Sign Out
         </button>
       </div>
     </aside>

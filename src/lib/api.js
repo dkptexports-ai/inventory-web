@@ -139,3 +139,90 @@ export async function markAsBilled(transactionId, invoiceNo) {
   if (error) throw error;
   return true;
 }
+
+// Employees
+export async function getEmployees() {
+  const { data, error } = await supabase.from('employees').select('*').order('name');
+  if (error) throw error;
+  return data;
+}
+
+export async function addEmployee(payload) {
+  if (!payload.name) throw new Error("Employee name is required");
+  const { data, error } = await supabase.from('employees').insert([payload]).select().single();
+  if (error) throw error;
+  return data;
+}
+
+export async function updateEmployee(id, payload) {
+  const { data, error } = await supabase.from('employees').update(payload).eq('id', id).select().single();
+  if (error) throw error;
+  return data;
+}
+
+// Companies
+export async function getCompanies() {
+  const { data, error } = await supabase.from('companies').select('*').order('name');
+  if (error) throw error;
+  
+  if (!data || data.length === 0) {
+    await supabase.from('companies').insert([
+      { name: 'DKPT' },
+      { name: 'Malik' },
+      { name: 'Tufting' }
+    ]);
+    const { data: newData } = await supabase.from('companies').select('*').order('name');
+    return newData;
+  }
+
+  return data;
+}
+
+// Attendance
+export async function getAttendance(month, year) {
+  const startDate = `${year}-${String(month).padStart(2, '0')}-01`;
+  const endDate = `${year}-${String(month).padStart(2, '0')}-${new Date(year, month, 0).getDate()}`;
+  const { data, error } = await supabase.from('attendance')
+    .select('*')
+    .gte('date', startDate)
+    .lte('date', endDate);
+  if (error) throw error;
+  return data;
+}
+
+export async function getAttendanceByDate(startDate, endDate) {
+  const { data, error } = await supabase.from('attendance')
+    .select('*')
+    .gte('date', startDate)
+    .lte('date', endDate);
+  if (error) throw error;
+  return data;
+}
+
+export async function saveAttendance(records) {
+  if (!records || records.length === 0) return true;
+  
+  // Clean up records: Supabase infers keys from the first object. 
+  // If some have 'id' and some don't, it sends null for missing ones.
+  // Since we upsert on 'employee_id,date', we can just omit 'id' entirely.
+  const cleanedRecords = records.map(r => {
+    const copy = { ...r };
+    delete copy.id;
+    return copy;
+  });
+
+  const { error } = await supabase.from('attendance').upsert(cleanedRecords, { onConflict: 'employee_id,date' });
+  if (error) throw error;
+  return true;
+}
+
+// Salary Payments
+export async function saveSalaryPayment(payload) {
+  // payload: { employee_id, company_id, payment_date, amount_cash, amount_bank, is_advance, month_year }
+  const { error } = await supabase.from('salary_payments').insert([payload]);
+  if (error) throw error;
+  
+  // Update employee balance logic would go here in a real scenario
+  return true;
+}
+
