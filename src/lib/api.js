@@ -208,6 +208,9 @@ export async function saveAttendance(records) {
   const cleanedRecords = records.map(r => {
     const copy = { ...r };
     delete copy.id;
+    if (copy.company_id === "") {
+      copy.company_id = null;
+    }
     return copy;
   });
 
