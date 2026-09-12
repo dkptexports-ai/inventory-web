@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { getVendors, getStyles, ensureStyle, addTransaction, getRecentTransactions, getNextBatchNumber } from '../lib/api';
-import { Plus, Trash2, Save } from 'lucide-react';
+import { getVendors, getStyles, ensureStyle, addTransaction, getRecentTransactions, getNextBatchNumber, updateTransaction, deleteTransaction } from '../lib/api';
+import { Plus, Trash2, Save, Edit2, X, Check } from 'lucide-react';
 
 const Transactions = () => {
   const [vendors, setVendors] = useState([]);
@@ -18,6 +18,53 @@ const Transactions = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(false);
+
+  const [editingId, setEditingId] = useState(null);
+  const [editForm, setEditForm] = useState({ date: '', challan_no: '', batch_no: '', inward_qty: '', outward_qty: '' });
+  
+  const [searchDate, setSearchDate] = useState('');
+  const [searchChallan, setSearchChallan] = useState('');
+  const [searchStyle, setSearchStyle] = useState('');
+
+  const startEdit = (t) => {
+    setEditingId(t.id);
+    setEditForm({
+      date: (t.date || t.created_at).split('T')[0],
+      challan_no: t.challan_no || '',
+      batch_no: t.batch_no || '',
+      inward_qty: t.inward_qty || 0,
+      outward_qty: t.outward_qty || 0
+    });
+  };
+
+  const saveEdit = async (id) => {
+    try {
+      await updateTransaction(id, {
+        date: editForm.date,
+        challan_no: editForm.challan_no,
+        batch_no: editForm.batch_no,
+        inward_qty: Number(editForm.inward_qty) || 0,
+        outward_qty: Number(editForm.outward_qty) || 0
+      });
+      setEditingId(null);
+      loadInitialData();
+    } catch (err) {
+      console.error(err);
+      alert('Failed to update transaction');
+    }
+  };
+
+  const deleteTx = async (id) => {
+    if (window.confirm('Are you sure you want to delete this transaction?')) {
+      try {
+        await deleteTransaction(id);
+        loadInitialData();
+      } catch (err) {
+        console.error(err);
+        alert('Failed to delete transaction');
+      }
+    }
+  };
 
   useEffect(() => {
     loadInitialData();
@@ -261,8 +308,38 @@ const Transactions = () => {
       </div>
       
       <div className="glass-card" style={{ padding: 0, overflow: 'hidden' }}>
-        <div style={{ padding: '1.5rem', borderBottom: '1px solid var(--border-color)' }}>
+        <div style={{ padding: '1.5rem', borderBottom: '1px solid var(--border-color)', display: 'flex', flexWrap: 'wrap', gap: '1rem', alignItems: 'center', justifyContent: 'space-between' }}>
           <h2 style={{ fontSize: '1.125rem' }}>Recent Activity</h2>
+          
+          <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+            <input 
+              type="date" 
+              className="input-field" 
+              style={{ padding: '0.4rem', fontSize: '0.8rem' }}
+              value={searchDate}
+              onChange={e => setSearchDate(e.target.value)}
+              title="Search by Date"
+            />
+            <input 
+              type="text" 
+              className="input-field" 
+              placeholder="Search Challan..." 
+              style={{ padding: '0.4rem', fontSize: '0.8rem', width: '130px' }}
+              value={searchChallan}
+              onChange={e => setSearchChallan(e.target.value)}
+            />
+            <input 
+              type="text" 
+              className="input-field" 
+              placeholder="Search Style..." 
+              style={{ padding: '0.4rem', fontSize: '0.8rem', width: '130px' }}
+              value={searchStyle}
+              onChange={e => setSearchStyle(e.target.value)}
+            />
+            {(searchDate || searchChallan || searchStyle) && (
+              <button className="btn btn-secondary" style={{ padding: '0.4rem' }} onClick={() => { setSearchDate(''); setSearchChallan(''); setSearchStyle(''); }}>Clear</button>
+            )}
+          </div>
         </div>
         <div className="table-container" style={{ border: 'none', borderRadius: 0 }}>
           <table>
@@ -274,15 +351,49 @@ const Transactions = () => {
                 <th>Style</th>
                 <th>IN</th>
                 <th>OUT</th>
+                <th>Actions</th>
               </tr>
             </thead>
             <tbody>
-              {recent.length === 0 ? (
-                <tr><td colSpan="6" style={{ textAlign: 'center' }}>No recent activity</td></tr>
+              {recent
+                .filter(t => {
+                  if (searchDate && !(t.date || t.created_at).startsWith(searchDate)) return false;
+                  if (searchChallan && !(t.challan_no || '').toLowerCase().includes(searchChallan.toLowerCase())) return false;
+                  if (searchStyle && !(t.styles?.name || '').toLowerCase().includes(searchStyle.toLowerCase())) return false;
+                  return true;
+                })
+                .length === 0 ? (
+                <tr><td colSpan="7" style={{ textAlign: 'center' }}>No recent activity found</td></tr>
               ) : (
-                recent.map(t => {
-                  const d = new Date(t.created_at);
+                recent
+                .filter(t => {
+                  if (searchDate && !(t.date || t.created_at).startsWith(searchDate)) return false;
+                  if (searchChallan && !(t.challan_no || '').toLowerCase().includes(searchChallan.toLowerCase())) return false;
+                  if (searchStyle && !(t.styles?.name || '').toLowerCase().includes(searchStyle.toLowerCase())) return false;
+                  return true;
+                })
+                .map(t => {
+                  const d = new Date(t.date || t.created_at);
                   const formattedDate = `${String(d.getDate()).padStart(2, '0')}-${String(d.getMonth() + 1).padStart(2, '0')}-${d.getFullYear()}`;
+                  if (editingId === t.id) {
+                    return (
+                      <tr key={t.id}>
+                        <td><input type="date" className="input-field" style={{ padding: '0.2rem', width: '110px' }} value={editForm.date} onChange={e => setEditForm({...editForm, date: e.target.value})} /></td>
+                        <td><input type="text" className="input-field" style={{ padding: '0.2rem', width: '80px' }} value={editForm.challan_no} onChange={e => setEditForm({...editForm, challan_no: e.target.value})} /></td>
+                        <td><input type="text" className="input-field" style={{ padding: '0.2rem', width: '80px' }} value={editForm.batch_no} onChange={e => setEditForm({...editForm, batch_no: e.target.value})} /></td>
+                        <td>{t.styles?.name}</td>
+                        <td><input type="number" className="input-field" style={{ padding: '0.2rem', width: '60px' }} value={editForm.inward_qty} onChange={e => setEditForm({...editForm, inward_qty: e.target.value})} /></td>
+                        <td><input type="number" className="input-field" style={{ padding: '0.2rem', width: '60px' }} value={editForm.outward_qty} onChange={e => setEditForm({...editForm, outward_qty: e.target.value})} /></td>
+                        <td>
+                          <div style={{ display: 'flex', gap: '0.5rem' }}>
+                            <button className="btn btn-primary" style={{ padding: '0.2rem 0.5rem' }} onClick={() => saveEdit(t.id)}><Check size={14} /></button>
+                            <button className="btn btn-secondary" style={{ padding: '0.2rem 0.5rem' }} onClick={() => setEditingId(null)}><X size={14} /></button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  }
+
                   return (
                     <tr key={t.id}>
                       <td>{formattedDate}</td>
@@ -291,6 +402,12 @@ const Transactions = () => {
                     <td>{t.styles?.name}</td>
                     <td>{t.inward_qty > 0 ? <span className="badge badge-success">{t.inward_qty}</span> : '-'}</td>
                     <td>{t.outward_qty > 0 ? <span className="badge badge-danger">{t.outward_qty}</span> : '-'}</td>
+                    <td>
+                      <div style={{ display: 'flex', gap: '0.5rem' }}>
+                        <button className="btn btn-secondary" style={{ padding: '0.2rem 0.5rem' }} onClick={() => startEdit(t)} title="Edit"><Edit2 size={14} /></button>
+                        <button className="btn btn-secondary" style={{ padding: '0.2rem 0.5rem', color: 'var(--danger)' }} onClick={() => deleteTx(t.id)} title="Delete"><Trash2 size={14} /></button>
+                      </div>
+                    </td>
                     </tr>
                   );
                 })
