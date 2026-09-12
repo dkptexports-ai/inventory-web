@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { getEmployees, addEmployee, updateEmployee } from '../lib/api';
+import { getEmployees, addEmployee, updateEmployee, deleteEmployee } from '../lib/api';
 
 const Employees = () => {
   const [employees, setEmployees] = useState([]);
@@ -98,6 +98,18 @@ const Employees = () => {
     } catch (err) {
       console.error(err);
       alert('Failed to save employee');
+    }
+  };
+
+  const handleDelete = async (id, name) => {
+    if (window.confirm(`Are you sure you want to delete ${name}? This action cannot be undone.`)) {
+      try {
+        await deleteEmployee(id);
+        loadEmployees();
+      } catch (err) {
+        console.error(err);
+        alert('Failed to delete employee. They might be linked to existing attendance or salary records.');
+      }
     }
   };
 
@@ -225,9 +237,14 @@ const Employees = () => {
                   </td>
                   <td>₹{emp.basic_salary}</td>
                   <td>
-                    <button className="btn btn-secondary" style={{ padding: '0.2rem 0.6rem', fontSize: '0.75rem' }} onClick={() => openFormForEdit(emp)}>
-                      Edit
-                    </button>
+                    <div style={{ display: 'flex', gap: '0.5rem' }}>
+                      <button className="btn btn-secondary" style={{ padding: '0.2rem 0.6rem', fontSize: '0.75rem' }} onClick={() => openFormForEdit(emp)}>
+                        Edit
+                      </button>
+                      <button className="btn btn-danger" style={{ padding: '0.2rem 0.6rem', fontSize: '0.75rem', background: 'var(--danger)', color: '#fff', border: 'none' }} onClick={() => handleDelete(emp.id, emp.name)}>
+                        Delete
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))

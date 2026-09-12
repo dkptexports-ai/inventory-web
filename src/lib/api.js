@@ -160,6 +160,12 @@ export async function updateEmployee(id, payload) {
   return data;
 }
 
+export async function deleteEmployee(id) {
+  const { error } = await supabase.from('employees').delete().eq('id', id);
+  if (error) throw error;
+  return true;
+}
+
 // Companies
 export async function getCompanies() {
   const { data, error } = await supabase.from('companies').select('*').order('name');
