@@ -49,8 +49,10 @@ const StyleLedger = () => {
     ];
 
     transactions.forEach(t => {
+      const d = new Date(t.created_at);
+      const formattedDate = `${String(d.getDate()).padStart(2, '0')}-${String(d.getMonth() + 1).padStart(2, '0')}-${d.getFullYear()}`;
       wsData.push([
-        new Date(t.created_at).toLocaleDateString(),
+        formattedDate,
         t.challan_no || '-',
         t.batch_no || '-',
         t.inward_qty || 0,
@@ -118,10 +120,13 @@ const StyleLedger = () => {
               ) : transactions.length === 0 ? (
                 <tr><td colSpan="6" style={{ textAlign: 'center' }}>No transactions found for this style</td></tr>
               ) : (
-                transactions.map((t, idx) => (
-                  <tr key={t.id || idx}>
-                    <td>{new Date(t.created_at).toLocaleDateString()}</td>
-                    <td>{t.challan_no || '-'}</td>
+                transactions.map((t, idx) => {
+                  const d = new Date(t.created_at);
+                  const formattedDate = `${String(d.getDate()).padStart(2, '0')}-${String(d.getMonth() + 1).padStart(2, '0')}-${d.getFullYear()}`;
+                  return (
+                    <tr key={t.id || idx}>
+                      <td>{formattedDate}</td>
+                      <td>{t.challan_no || '-'}</td>
                     <td><span className="badge badge-neutral">{t.batch_no || '-'}</span></td>
                     <td style={{ textAlign: 'right', color: 'var(--success)', fontWeight: 500 }}>
                       {t.inward_qty > 0 ? `+${t.inward_qty}` : '-'}
@@ -132,8 +137,9 @@ const StyleLedger = () => {
                     <td style={{ textAlign: 'right', fontWeight: 'bold', backgroundColor: 'rgba(255,255,255,0.02)' }}>
                       {t.balance}
                     </td>
-                  </tr>
-                ))
+                    </tr>
+                  );
+                })
               )}
             </tbody>
           </table>

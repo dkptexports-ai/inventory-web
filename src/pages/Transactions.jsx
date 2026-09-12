@@ -9,6 +9,7 @@ const Transactions = () => {
   
   const [vendorName, setVendorName] = useState('');
   const [challanNo, setChallanNo] = useState('');
+  const [transactionDate, setTransactionDate] = useState(new Date().toISOString().split('T')[0]);
   
   const [items, setItems] = useState([
     { id: 1, styleName: '', batch_no: '', inward_qty: '', outward_qty: '' }
@@ -109,7 +110,8 @@ const Transactions = () => {
       }
 
       const transactionsToInsert = [];
-      const dateIso = new Date().toISOString();
+      // Combine selected date with current time for timestamp if needed, or just send date
+      const dateIso = new Date(transactionDate).toISOString();
 
       for (const item of validItems) {
         const styleId = await ensureStyle(item.styleName, vendor_id);
@@ -152,7 +154,16 @@ const Transactions = () => {
         {error && <div style={{ color: 'var(--danger)', marginBottom: '1rem', fontSize: '0.875rem', padding: '0.5rem', background: 'rgba(248,81,73,0.1)', borderRadius: '4px' }}>{error}</div>}
         {success && <div style={{ color: 'var(--success)', marginBottom: '1rem', fontSize: '0.875rem', padding: '0.5rem', background: 'rgba(46,160,67,0.1)', borderRadius: '4px' }}>Transactions saved successfully!</div>}
         
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem', marginBottom: '2rem' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '1.5rem', marginBottom: '2rem' }}>
+          <div className="input-group">
+            <label className="input-label">Date *</label>
+            <input 
+              type="date"
+              className="input-field" 
+              value={transactionDate}
+              onChange={(e) => setTransactionDate(e.target.value)}
+            />
+          </div>
           <div className="input-group">
             <label className="input-label">Select Customer / Vendor *</label>
             <input 
@@ -269,16 +280,20 @@ const Transactions = () => {
               {recent.length === 0 ? (
                 <tr><td colSpan="6" style={{ textAlign: 'center' }}>No recent activity</td></tr>
               ) : (
-                recent.map(t => (
-                  <tr key={t.id}>
-                    <td>{new Date(t.created_at).toLocaleDateString()}</td>
-                    <td>{t.challan_no || '-'}</td>
+                recent.map(t => {
+                  const d = new Date(t.created_at);
+                  const formattedDate = `${String(d.getDate()).padStart(2, '0')}-${String(d.getMonth() + 1).padStart(2, '0')}-${d.getFullYear()}`;
+                  return (
+                    <tr key={t.id}>
+                      <td>{formattedDate}</td>
+                      <td>{t.challan_no || '-'}</td>
                     <td><span className="badge badge-neutral">{t.batch_no || '-'}</span></td>
                     <td>{t.styles?.name}</td>
                     <td>{t.inward_qty > 0 ? <span className="badge badge-success">{t.inward_qty}</span> : '-'}</td>
                     <td>{t.outward_qty > 0 ? <span className="badge badge-danger">{t.outward_qty}</span> : '-'}</td>
-                  </tr>
-                ))
+                    </tr>
+                  );
+                })
               )}
             </tbody>
           </table>
