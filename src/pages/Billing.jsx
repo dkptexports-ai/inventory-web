@@ -9,6 +9,7 @@ const Billing = () => {
   // A simple state for popup
   const [activeInvoice, setActiveInvoice] = useState(null);
   const [invoiceNo, setInvoiceNo] = useState('');
+  const [invoiceDate, setInvoiceDate] = useState(new Date().toISOString().split('T')[0]);
 
   useEffect(() => {
     loadChallans();
@@ -28,9 +29,10 @@ const Billing = () => {
     if (!activeInvoice || !invoiceNo) return;
     try {
       setLoading(true);
-      await markAsBilled(activeInvoice.id, invoiceNo);
+      await markAsBilled(activeInvoice.id, invoiceNo, invoiceDate);
       setActiveInvoice(null);
       setInvoiceNo('');
+      setInvoiceDate(new Date().toISOString().split('T')[0]);
       loadChallans();
     } catch (err) {
       console.error(err);
@@ -68,6 +70,15 @@ const Billing = () => {
                 value={invoiceNo}
                 onChange={e => setInvoiceNo(e.target.value)}
                 placeholder="INV-XXXX"
+              />
+            </div>
+            <div className="input-group" style={{ marginTop: '1rem' }}>
+              <label className="input-label">Invoice Date</label>
+              <input 
+                type="date" 
+                className="input-field" 
+                value={invoiceDate}
+                onChange={e => setInvoiceDate(e.target.value)}
               />
             </div>
             <div style={{ display: 'flex', gap: '1rem', marginTop: '1.5rem' }}>

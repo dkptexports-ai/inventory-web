@@ -144,9 +144,10 @@ export async function getPendingChallans() {
   return data;
 }
 
-export async function markAsBilled(transactionId, invoiceNo) {
+export async function markAsBilled(transactionId, invoiceNo, invoiceDate) {
+  const dateIso = invoiceDate ? new Date(invoiceDate).toISOString() : new Date().toISOString();
   const { error } = await supabase.from('transactions')
-    .update({ bill_status: 'Billed', invoice_no: invoiceNo, invoice_date: new Date().toISOString() })
+    .update({ bill_status: 'Billed', invoice_no: invoiceNo, invoice_date: dateIso })
     .eq('id', transactionId);
   if (error) throw error;
   return true;

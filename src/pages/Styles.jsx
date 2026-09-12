@@ -36,9 +36,8 @@ const Styles = () => {
           <table>
             <thead>
               <tr>
-                <th>Style ID</th>
                 <th>Style Name</th>
-                <th>Vendor</th>
+                <th>Customer / Vendor</th>
                 <th>Unit</th>
               </tr>
             </thead>
@@ -50,10 +49,9 @@ const Styles = () => {
               ) : (
                 styles.map(s => (
                   <tr key={s.id}>
-                    <td>{s.id.substring(0, 8)}...</td>
                     <td>
-                      <Link to={`/styles/${s.id}`} style={{ color: '#fff', textDecoration: 'none', display: 'flex', alignItems: 'center', gap: '0.5rem', fontWeight: 500 }}>
-                        {s.name} <ExternalLink size={14} color="var(--accent-primary)" />
+                      <Link to={`/styles/${s.id}`} style={{ color: 'var(--accent-primary)', textDecoration: 'none', display: 'flex', alignItems: 'center', gap: '0.5rem', fontWeight: 600 }}>
+                        {s.name} <ExternalLink size={14} />
                       </Link>
                     </td>
                     <td>{s.vendors?.name || '-'}</td>
