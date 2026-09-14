@@ -1,6 +1,6 @@
 import React from 'react';
 import { NavLink } from 'react-router-dom';
-import { LayoutDashboard, ArrowRightLeft, FileText, Settings, Users, Package, CalendarDays, IndianRupee, LogOut } from 'lucide-react';
+import { LayoutDashboard, ArrowRightLeft, FileText, Settings, Users, Package, CalendarDays, IndianRupee, LogOut, Wallet, Receipt, ShoppingCart, PieChart, Briefcase } from 'lucide-react';
 
 const Sidebar = ({ onLogout }) => {
   return (
@@ -48,6 +48,46 @@ const Sidebar = ({ onLogout }) => {
         >
           <IndianRupee size={18} />
           Salary
+        </NavLink>
+
+        <NavLink 
+          to="/expenses" 
+          className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}
+        >
+          <Wallet size={18} />
+          Expenses
+        </NavLink>
+        
+        <NavLink 
+          to="/receipts" 
+          className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}
+        >
+          <Receipt size={18} />
+          Receipts
+        </NavLink>
+
+        <NavLink 
+          to="/purchases" 
+          className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}
+        >
+          <ShoppingCart size={18} />
+          Purchases
+        </NavLink>
+
+        <NavLink 
+          to="/pnl" 
+          className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}
+        >
+          <PieChart size={18} />
+          Profit & Loss
+        </NavLink>
+
+        <NavLink 
+          to="/partner" 
+          className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}
+        >
+          <Briefcase size={18} />
+          Partner (Karambir)
         </NavLink>
         
         <NavLink 

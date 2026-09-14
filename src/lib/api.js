@@ -262,3 +262,91 @@ export async function saveSalaryPayment(payload) {
   return true;
 }
 
+export async function getSalaryPayments() {
+  const { data, error } = await supabase.from('salary_payments').select('*, companies(name)');
+  if (error) throw error;
+  return data;
+}
+
+// Partner Ledgers
+export async function getPartnerLedger(partnerName) {
+  const { data, error } = await supabase.from('partner_ledgers')
+    .select('*')
+    .eq('partner_name', partnerName)
+    .order('date', { ascending: true })
+    .order('created_at', { ascending: true });
+  if (error) throw error;
+  return data;
+}
+
+export async function addPartnerLedgerEntry(payload) {
+  const { error } = await supabase.from('partner_ledgers').insert([payload]);
+  if (error) throw error;
+  return true;
+}
+
+export async function deletePartnerLedgerEntry(id) {
+  const { error } = await supabase.from('partner_ledgers').delete().eq('id', id);
+  if (error) throw error;
+  return true;
+}
+
+// Customer Receipts
+export async function getCustomerReceipts() {
+  const { data, error } = await supabase.from('customer_receipts')
+    .select('*')
+    .order('date', { ascending: false })
+    .order('created_at', { ascending: false });
+  if (error) throw error;
+  return data;
+}
+
+export async function addCustomerReceipt(payload) {
+  const { error } = await supabase.from('customer_receipts').insert([payload]);
+  if (error) throw error;
+  return true;
+}
+
+export async function deleteCustomerReceipt(id) {
+  const { error } = await supabase.from('customer_receipts').delete().eq('id', id);
+  if (error) throw error;
+  return true;
+}
+
+// Purchase Register
+export async function getPurchaseRegister() {
+  const { data, error } = await supabase.from('purchase_register')
+    .select('*')
+    .order('date', { ascending: false })
+    .order('created_at', { ascending: false });
+  if (error) throw error;
+  return data;
+}
+
+export async function addPurchaseRegisterEntry(payload) {
+  const { error } = await supabase.from('purchase_register').insert([payload]);
+  if (error) throw error;
+  return true;
+}
+
+export async function deletePurchaseRegisterEntry(id) {
+  const { error } = await supabase.from('purchase_register').delete().eq('id', id);
+  if (error) throw error;
+  return true;
+}
+
+// P&L Manual Expenses
+export async function getPnlManualExpenses() {
+  const { data, error } = await supabase.from('pnl_manual_expenses').select('*');
+  if (error) throw error;
+  return data;
+}
+
+export async function updatePnlManualExpense(head_name, amount) {
+  const { error } = await supabase.from('pnl_manual_expenses')
+    .upsert({ head_name, amount, updated_at: new Date().toISOString() });
+  if (error) throw error;
+  return true;
+}
+
+

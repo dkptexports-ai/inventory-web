@@ -12,6 +12,11 @@ import Login from './pages/Login';
 import Employees from './pages/Employees';
 import Attendance from './pages/Attendance';
 import Salary from './pages/Salary';
+import ExpensesSheet from './pages/ExpensesSheet';
+import ReceiptSheet from './pages/ReceiptSheet';
+import PurchaseRegister from './pages/PurchaseRegister';
+import ProfitAndLoss from './pages/ProfitAndLoss';
+import PartnerSheet from './pages/PartnerSheet';
 
 function App() {
   // Simplified auth state for now
@@ -45,6 +50,11 @@ function App() {
             <Route path="/styles/:id" element={<StyleLedger />} />
             <Route path="/vendors" element={<Vendors />} />
             <Route path="/master" element={<MasterData />} />
+            <Route path="/expenses" element={<ExpensesSheet />} />
+            <Route path="/receipts" element={<ReceiptSheet />} />
+            <Route path="/purchases" element={<PurchaseRegister />} />
+            <Route path="/pnl" element={<ProfitAndLoss />} />
+            <Route path="/partner" element={<PartnerSheet />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </main>
