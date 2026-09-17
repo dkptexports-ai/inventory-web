@@ -6,6 +6,7 @@ import Transactions from './pages/Transactions';
 import Billing from './pages/Billing';
 import Styles from './pages/Styles';
 import StyleLedger from './pages/StyleLedger';
+import BatchLedger from './pages/BatchLedger';
 import Vendors from './pages/Vendors';
 import MasterData from './pages/MasterData';
 import Login from './pages/Login';
@@ -48,6 +49,7 @@ function App() {
             <Route path="/billing" element={<Billing />} />
             <Route path="/styles" element={<Styles />} />
             <Route path="/styles/:id" element={<StyleLedger />} />
+            <Route path="/batch/:batchNo" element={<BatchLedger />} />
             <Route path="/vendors" element={<Vendors />} />
             <Route path="/master" element={<MasterData />} />
             <Route path="/expenses" element={<ExpensesSheet />} />

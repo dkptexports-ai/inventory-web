@@ -1,23 +1,23 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { getStyleLedger } from '../lib/api';
+import { getBatchLedger } from '../lib/api';
 import { ArrowLeft, Printer, Download, FileText } from 'lucide-react';
 import * as XLSX from 'xlsx';
 
-const StyleLedger = () => {
-  const { id } = useParams();
+const BatchLedger = () => {
+  const { batchNo } = useParams();
   const [transactions, setTransactions] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [styleInfo, setStyleInfo] = useState({ name: '', vendor: '' });
+  const [batchInfo, setBatchInfo] = useState({ name: '', vendor: '' });
 
   useEffect(() => {
     async function loadLedger() {
       try {
         setLoading(true);
-        const data = await getStyleLedger(id);
+        const data = await getBatchLedger(batchNo);
         
         if (data && data.length > 0) {
-          setStyleInfo({
+          setBatchInfo({
             name: data[0].styles?.name || 'Unknown Style',
             vendor: data[0].styles?.vendors?.name || 'Unknown Vendor'
           });
@@ -38,14 +38,15 @@ const StyleLedger = () => {
       }
     }
     loadLedger();
-  }, [id]);
+  }, [batchNo]);
 
   const exportToExcel = () => {
     const wsData = [
-      ['Style Ledger Report'],
-      [`Style: ${styleInfo.name}`, `Customer: ${styleInfo.vendor}`],
+      ['Batch Ledger Report'],
+      [`Batch/Lot No: ${batchNo}`],
+      [`Style: ${batchInfo.name}`, `Customer: ${batchInfo.vendor}`],
       [], // empty row
-      ['Date', 'Challan No', 'Batch/Lot No', 'IN (Qty)', 'OUT (Qty)', 'Balance']
+      ['Date', 'Challan No', 'Firm', 'IN (Qty)', 'OUT (Qty)', 'Balance']
     ];
 
     transactions.forEach(t => {
@@ -54,7 +55,7 @@ const StyleLedger = () => {
       wsData.push([
         formattedDate,
         t.challan_no || '-',
-        t.batch_no || '-',
+        t.firm || '-',
         t.inward_qty || 0,
         t.outward_qty || 0,
         t.balance
@@ -64,7 +65,7 @@ const StyleLedger = () => {
     const ws = XLSX.utils.aoa_to_sheet(wsData);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Ledger");
-    XLSX.writeFile(wb, `${styleInfo.name}_Ledger.xlsx`);
+    XLSX.writeFile(wb, `${batchNo}_Ledger.xlsx`);
   };
 
   const printPDF = () => {
@@ -75,10 +76,10 @@ const StyleLedger = () => {
     <div className="ledger-container">
       <header className="page-header no-print">
         <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-          <Link to="/styles" className="btn btn-secondary" style={{ padding: '0.5rem' }}>
+          <Link to="/billing" className="btn btn-secondary" style={{ padding: '0.5rem' }}>
             <ArrowLeft size={18} />
           </Link>
-          <h1 className="page-title">Style Ledger</h1>
+          <h1 className="page-title">Batch Ledger</h1>
         </div>
         <div style={{ display: 'flex', gap: '0.5rem' }}>
           <button className="btn btn-secondary" onClick={exportToExcel} disabled={loading || transactions.length === 0}>
@@ -93,8 +94,9 @@ const StyleLedger = () => {
       <div className="glass-card printable-area">
         <div className="ledger-header" style={{ marginBottom: '2rem', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
           <div>
-            <h2 style={{ fontSize: '1.5rem', marginBottom: '0.5rem' }}>{styleInfo.name || 'Loading...'}</h2>
-            <p style={{ color: 'var(--text-muted)' }}>Customer / Vendor: {styleInfo.vendor || '-'}</p>
+            <h2 style={{ fontSize: '1.5rem', marginBottom: '0.5rem' }}>Batch: {batchNo}</h2>
+            <p style={{ color: 'var(--accent-primary)', fontWeight: 600, marginBottom: '0.25rem' }}>Style: {batchInfo.name || 'Loading...'}</p>
+            <p style={{ color: 'var(--text-muted)' }}>Customer / Vendor: {batchInfo.vendor || '-'}</p>
           </div>
           <div style={{ textAlign: 'right' }}>
             <FileText size={40} color="var(--accent-primary)" style={{ opacity: 0.5 }} />
@@ -108,7 +110,7 @@ const StyleLedger = () => {
               <tr>
                 <th>Date</th>
                 <th>Challan No</th>
-                <th>Batch / Lot</th>
+                <th>Firm</th>
                 <th style={{ textAlign: 'right' }}>IN</th>
                 <th style={{ textAlign: 'right' }}>OUT</th>
                 <th style={{ textAlign: 'right', backgroundColor: 'rgba(99, 102, 241, 0.1)' }}>Balance</th>
@@ -118,7 +120,7 @@ const StyleLedger = () => {
               {loading ? (
                 <tr><td colSpan="6" style={{ textAlign: 'center' }}>Loading ledger...</td></tr>
               ) : transactions.length === 0 ? (
-                <tr><td colSpan="6" style={{ textAlign: 'center' }}>No transactions found for this style</td></tr>
+                <tr><td colSpan="6" style={{ textAlign: 'center' }}>No transactions found for this batch</td></tr>
               ) : (
                 transactions.map((t, idx) => {
                   const d = new Date(t.date || t.created_at);
@@ -127,7 +129,7 @@ const StyleLedger = () => {
                     <tr key={t.id || idx}>
                       <td>{formattedDate}</td>
                       <td>{t.challan_no || '-'}</td>
-                    <td><span className="badge badge-neutral">{t.batch_no || '-'}</span></td>
+                      <td>{t.firm || '-'}</td>
                     <td style={{ textAlign: 'right', color: 'var(--success)', fontWeight: 500 }}>
                       {t.inward_qty > 0 ? `+${t.inward_qty}` : '-'}
                     </td>
@@ -149,4 +151,4 @@ const StyleLedger = () => {
   );
 };
 
-export default StyleLedger;
+export default BatchLedger;

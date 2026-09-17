@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { getPendingChallans, markAsBilled } from '../lib/api';
+import { getPendingBatchesForBilling, markAsBilled } from '../lib/api';
+import { Link } from 'react-router-dom';
 
 const Billing = () => {
   const [challans, setChallans] = useState([]);
@@ -17,9 +18,8 @@ const Billing = () => {
 
   async function loadChallans() {
     try {
-      const data = await getPendingChallans();
-      // Filter out zero outward qty if billing is based on outward
-      setChallans(data.filter(t => t.outward_qty > 0));
+      const data = await getPendingBatchesForBilling();
+      setChallans(data);
     } catch (err) {
       console.error(err);
     }
@@ -29,7 +29,7 @@ const Billing = () => {
     if (!activeInvoice || !invoiceNo) return;
     try {
       setLoading(true);
-      await markAsBilled(activeInvoice.id, invoiceNo, invoiceDate);
+      await markAsBilled(activeInvoice.transaction_ids, invoiceNo, invoiceDate);
       setActiveInvoice(null);
       setInvoiceNo('');
       setInvoiceDate(new Date().toISOString().split('T')[0]);
@@ -42,7 +42,7 @@ const Billing = () => {
   };
 
   const filteredChallans = challans.filter(c => 
-    c.challan_no?.toLowerCase().includes(search.toLowerCase()) ||
+    c.batch_no?.toLowerCase().includes(search.toLowerCase()) ||
     c.styles?.name.toLowerCase().includes(search.toLowerCase())
   );
 
@@ -51,6 +51,27 @@ const Billing = () => {
       <header className="page-header">
         <h1 className="page-title">Billing & Invoices</h1>
       </header>
+      
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1.5rem', marginBottom: '2rem' }}>
+        <div className="glass-card stat-card" style={{ padding: '1rem' }}>
+          <h3 style={{ fontSize: '0.875rem', color: 'var(--text-muted)' }}>Pending Vendors</h3>
+          <p style={{ fontSize: '1.5rem', fontWeight: 600, marginTop: '0.5rem', color: 'var(--accent-primary)' }}>
+            {new Set(challans.map(c => c.styles?.vendors?.name).filter(Boolean)).size}
+          </p>
+        </div>
+        <div className="glass-card stat-card" style={{ padding: '1rem' }}>
+          <h3 style={{ fontSize: '0.875rem', color: 'var(--text-muted)' }}>Pending Firms</h3>
+          <p style={{ fontSize: '1.5rem', fontWeight: 600, marginTop: '0.5rem', color: 'var(--warning)' }}>
+            {new Set(challans.map(c => c.firm).filter(Boolean)).size}
+          </p>
+        </div>
+        <div className="glass-card stat-card" style={{ padding: '1rem' }}>
+          <h3 style={{ fontSize: '0.875rem', color: 'var(--text-muted)' }}>Pending Styles</h3>
+          <p style={{ fontSize: '1.5rem', fontWeight: 600, marginTop: '0.5rem', color: 'var(--success)' }}>
+            {new Set(challans.map(c => c.styles?.name).filter(Boolean)).size}
+          </p>
+        </div>
+      </div>
       
       {activeInvoice && (
         <div style={{
@@ -108,7 +129,8 @@ const Billing = () => {
             <thead>
               <tr>
                 <th>Date</th>
-                <th>Challan No.</th>
+                <th>Batch / Lot No.</th>
+                <th>Firm</th>
                 <th>Vendor</th>
                 <th>Style</th>
                 <th>Out Qty</th>
@@ -117,15 +139,23 @@ const Billing = () => {
             </thead>
             <tbody>
               {filteredChallans.length === 0 ? (
-                <tr><td colSpan="6" style={{ textAlign: 'center' }}>No pending bills found.</td></tr>
+                <tr><td colSpan="7" style={{ textAlign: 'center' }}>No pending bills found.</td></tr>
               ) : (
-                filteredChallans.map(c => (
+                filteredChallans.map(c => {
+                  const d = new Date(c.date || c.created_at);
+                  const formattedDate = `${String(d.getDate()).padStart(2, '0')}-${String(d.getMonth() + 1).padStart(2, '0')}-${d.getFullYear()}`;
+                  return (
                   <tr key={c.id}>
-                    <td>{new Date(c.created_at).toLocaleDateString()}</td>
-                    <td>{c.challan_no || '-'}</td>
+                    <td>{formattedDate}</td>
+                    <td>
+                      <Link to={`/batch/${c.batch_no}`} style={{ color: 'var(--accent-primary)', textDecoration: 'none', fontWeight: 600 }}>
+                        {c.batch_no || '-'}
+                      </Link>
+                    </td>
+                    <td>{c.firm || '-'}</td>
                     <td>{c.styles?.vendors?.name}</td>
                     <td>{c.styles?.name}</td>
-                    <td>{c.outward_qty}</td>
+                    <td><span className="badge badge-warning">{c.outward_qty}</span></td>
                     <td>
                       <button 
                         className="btn btn-secondary" 
@@ -136,7 +166,8 @@ const Billing = () => {
                       </button>
                     </td>
                   </tr>
-                ))
+                  );
+                })
               )}
             </tbody>
           </table>

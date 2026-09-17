@@ -25,6 +25,27 @@ export async function getStyles(vendorId = null) {
   return data;
 }
 
+export async function getStylesWithBalances() {
+  const { data: styles, error: stylesError } = await supabase.from('styles').select('*, vendors(name)').order('name');
+  if (stylesError) throw stylesError;
+  
+  const { data: tx, error: txError } = await supabase.from('transactions').select('style_id, inward_qty, outward_qty');
+  if (txError) throw txError;
+  
+  const balances = {};
+  for (const t of tx) {
+    if (!balances[t.style_id]) balances[t.style_id] = { in: 0, out: 0, bal: 0 };
+    balances[t.style_id].in += Number(t.inward_qty) || 0;
+    balances[t.style_id].out += Number(t.outward_qty) || 0;
+  }
+  
+  return styles.map(s => {
+    const b = balances[s.id] || { in: 0, out: 0, bal: 0 };
+    b.bal = b.in - b.out;
+    return { ...s, stats: b };
+  });
+}
+
 export async function addStyle(name, vendor_id, unit = 'PCS') {
   if (!name || !vendor_id) throw new Error("Style name and Vendor are required");
   const { data, error } = await supabase.from('styles').insert([{ name, vendor_id, unit }]).select().single();
@@ -74,40 +95,61 @@ export async function deleteTransaction(id) {
   return true;
 }
 
-export async function getNextBatchNumber(styleId) {
-  if (!styleId) return '';
-  
-  const now = new Date();
-  const monthNames = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"];
-  const currentMonthStr = monthNames[now.getMonth()];
-  const prefix = `B-${currentMonthStr}-`;
-  
-  // Get the latest transaction for this style in the current month with a batch number
+export async function getPendingBatchesForStyle(styleId) {
+  if (!styleId) return [];
   const { data, error } = await supabase.from('transactions')
     .select('batch_no')
     .eq('style_id', styleId)
-    .like('batch_no', `${prefix}%`)
-    .order('created_at', { ascending: false })
-    .limit(1);
+    .eq('bill_status', 'Pending')
+    .not('batch_no', 'is', null);
+    
+  if (error) {
+    console.error("Error fetching pending batches", error);
+    return [];
+  }
+  
+  const batches = [...new Set(data.map(t => t.batch_no).filter(Boolean))];
+  return batches;
+}
+
+export async function getNextBatchNumber(styleName, transactionDateStr = null) {
+  if (!styleName) return '';
+  
+  const d = transactionDateStr ? new Date(transactionDateStr) : new Date();
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const yy = String(d.getFullYear()).slice(-2);
+  const mmyy = `${mm}${yy}`;
+  
+  const cleanStyle = styleName.replace(/\s+/g, '').toUpperCase();
+  const first4 = cleanStyle.substring(0, 4);
+  const last4 = cleanStyle.length > 4 ? cleanStyle.substring(cleanStyle.length - 4) : '';
+  const styleCode = `${first4}${last4}`;
+  
+  const prefix = `${mmyy}-${styleCode}-`;
+  
+  const { data, error } = await supabase.from('transactions')
+    .select('batch_no')
+    .like('batch_no', `${prefix}%`);
     
   if (error) {
     console.error("Error fetching batch no", error);
-    return `${prefix}01`;
+    return `${prefix}1`;
   }
   
-  if (data && data.length > 0 && data[0].batch_no) {
-    const lastBatch = data[0].batch_no;
-    const parts = lastBatch.split('-');
-    if (parts.length === 3) {
-      const lastNum = parseInt(parts[2], 10);
-      if (!isNaN(lastNum)) {
-        const nextNum = lastNum + 1;
-        return `${prefix}${nextNum.toString().padStart(2, '0')}`;
+  let maxSeq = 0;
+  for (const t of data) {
+    if (t.batch_no) {
+      const parts = t.batch_no.split('-');
+      if (parts.length === 3) {
+        const num = parseInt(parts[2], 10);
+        if (!isNaN(num) && num > maxSeq) {
+          maxSeq = num;
+        }
       }
     }
   }
   
-  return `${prefix}01`;
+  return `${prefix}${maxSeq + 1}`;
 }
 
 export async function getStyleLedger(styleId) {
@@ -115,6 +157,15 @@ export async function getStyleLedger(styleId) {
     .select('*, styles(name, vendors(name))')
     .eq('style_id', styleId)
     .order('created_at', { ascending: true }); // Ascending for running balance calculation
+  if (error) throw error;
+  return data;
+}
+
+export async function getBatchLedger(batchNo) {
+  const { data, error } = await supabase.from('transactions')
+    .select('*, styles(name, vendors(name))')
+    .eq('batch_no', batchNo)
+    .order('created_at', { ascending: true });
   if (error) throw error;
   return data;
 }
@@ -144,11 +195,41 @@ export async function getPendingChallans() {
   return data;
 }
 
-export async function markAsBilled(transactionId, invoiceNo, invoiceDate) {
+export async function getPendingBatchesForBilling() {
+  const { data, error } = await supabase.from('transactions')
+    .select('*, styles(name, vendors(name))')
+    .eq('bill_status', 'Pending')
+    .not('batch_no', 'is', null)
+    .gt('outward_qty', 0);
+  if (error) throw error;
+  
+  const batchesMap = {};
+  for (const t of data) {
+    if (!batchesMap[t.batch_no]) {
+      batchesMap[t.batch_no] = {
+        id: t.batch_no, // Use batch_no as id for react keys
+        batch_no: t.batch_no,
+        styles: t.styles,
+        firm: t.firm,
+        date: t.date || t.created_at,
+        outward_qty: 0,
+        transaction_ids: []
+      };
+    }
+    batchesMap[t.batch_no].outward_qty += Number(t.outward_qty) || 0;
+    batchesMap[t.batch_no].transaction_ids.push(t.id);
+  }
+  
+  return Object.values(batchesMap).sort((a, b) => new Date(b.date) - new Date(a.date));
+}
+
+export async function markAsBilled(transactionIds, invoiceNo, invoiceDate) {
   const dateIso = invoiceDate ? new Date(invoiceDate).toISOString() : new Date().toISOString();
+  const ids = Array.isArray(transactionIds) ? transactionIds : [transactionIds];
+  
   const { error } = await supabase.from('transactions')
     .update({ bill_status: 'Billed', invoice_no: invoiceNo, invoice_date: dateIso })
-    .eq('id', transactionId);
+    .in('id', ids);
   if (error) throw error;
   return true;
 }

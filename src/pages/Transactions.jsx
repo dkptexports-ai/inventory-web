@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { getVendors, getStyles, ensureStyle, addTransaction, getRecentTransactions, getNextBatchNumber, updateTransaction, deleteTransaction } from '../lib/api';
+import { getVendors, getStyles, ensureStyle, addTransaction, getRecentTransactions, getNextBatchNumber, getPendingBatchesForStyle, updateTransaction, deleteTransaction } from '../lib/api';
 import { Plus, Trash2, Save, Edit2, X, Check } from 'lucide-react';
 
 const Transactions = () => {
@@ -10,9 +10,10 @@ const Transactions = () => {
   const [vendorName, setVendorName] = useState('');
   const [challanNo, setChallanNo] = useState('');
   const [transactionDate, setTransactionDate] = useState(new Date().toISOString().split('T')[0]);
+  const [firm, setFirm] = useState('MC');
   
   const [items, setItems] = useState([
-    { id: 1, styleName: '', batch_no: '', inward_qty: '', outward_qty: '' }
+    { id: 1, styleName: '', batch_no: '', inward_qty: '', outward_qty: '', pendingBatches: [], nextBatch: '' }
   ]);
   
   const [loading, setLoading] = useState(false);
@@ -20,7 +21,7 @@ const Transactions = () => {
   const [success, setSuccess] = useState(false);
 
   const [editingId, setEditingId] = useState(null);
-  const [editForm, setEditForm] = useState({ date: '', challan_no: '', batch_no: '', inward_qty: '', outward_qty: '' });
+  const [editForm, setEditForm] = useState({ date: '', challan_no: '', batch_no: '', inward_qty: '', outward_qty: '', firm: 'MC' });
   
   const [searchDate, setSearchDate] = useState('');
   const [searchChallan, setSearchChallan] = useState('');
@@ -33,7 +34,8 @@ const Transactions = () => {
       challan_no: t.challan_no || '',
       batch_no: t.batch_no || '',
       inward_qty: t.inward_qty || 0,
-      outward_qty: t.outward_qty || 0
+      outward_qty: t.outward_qty || 0,
+      firm: t.firm || 'MC'
     });
   };
 
@@ -44,7 +46,8 @@ const Transactions = () => {
         challan_no: editForm.challan_no,
         batch_no: editForm.batch_no,
         inward_qty: Number(editForm.inward_qty) || 0,
-        outward_qty: Number(editForm.outward_qty) || 0
+        outward_qty: Number(editForm.outward_qty) || 0,
+        firm: editForm.firm
       });
       setEditingId(null);
       loadInitialData();
@@ -88,13 +91,16 @@ const Transactions = () => {
     newItems[index].styleName = newStyleName;
     setItems(newItems);
 
-    // Auto-generate batch no
     if (newStyleName.length > 2) {
       const existingStyle = styles.find(s => s.name.toLowerCase() === newStyleName.toLowerCase());
       if (existingStyle) {
-        const nextBatch = await getNextBatchNumber(existingStyle.id);
-        const updatedItems = [...newItems];
-        updatedItems[index].batch_no = nextBatch;
+        const pending = await getPendingBatchesForStyle(existingStyle.id);
+        const nextB = await getNextBatchNumber(existingStyle.name, transactionDate);
+        const updatedItems = [...items];
+        updatedItems[index].styleName = newStyleName;
+        updatedItems[index].pendingBatches = pending;
+        updatedItems[index].nextBatch = nextB;
+        updatedItems[index].batch_no = '';
         setItems(updatedItems);
       }
     }
@@ -107,7 +113,7 @@ const Transactions = () => {
   };
 
   const addItem = () => {
-    setItems([...items, { id: Date.now(), styleName: '', batch_no: '', inward_qty: '', outward_qty: '' }]);
+    setItems([...items, { id: Date.now(), styleName: '', batch_no: '', inward_qty: '', outward_qty: '', pendingBatches: [], nextBatch: '' }]);
   };
 
   const handleKeyDown = (e, index) => {
@@ -127,7 +133,7 @@ const Transactions = () => {
   const removeItem = (index) => {
     const newItems = items.filter((_, i) => i !== index);
     if (newItems.length === 0) {
-      setItems([{ id: Date.now(), styleName: '', batch_no: '', inward_qty: '', outward_qty: '' }]);
+      setItems([{ id: Date.now(), styleName: '', batch_no: '', inward_qty: '', outward_qty: '', pendingBatches: [], nextBatch: '' }]);
     } else {
       setItems(newItems);
     }
@@ -168,7 +174,8 @@ const Transactions = () => {
           batch_no: item.batch_no || null,
           inward_qty: Number(item.inward_qty) || 0,
           outward_qty: Number(item.outward_qty) || 0,
-          date: dateIso
+          date: dateIso,
+          firm: firm
         });
       }
       
@@ -178,7 +185,7 @@ const Transactions = () => {
       // Reset form
       setVendorName('');
       setChallanNo('');
-      setItems([{ id: Date.now(), styleName: '', batch_no: '', inward_qty: '', outward_qty: '' }]);
+      setItems([{ id: Date.now(), styleName: '', batch_no: '', inward_qty: '', outward_qty: '', pendingBatches: [], nextBatch: '' }]);
       loadInitialData();
     } catch (err) {
       setError(err.message);
@@ -201,7 +208,7 @@ const Transactions = () => {
         {error && <div style={{ color: 'var(--danger)', marginBottom: '1rem', fontSize: '0.875rem', padding: '0.5rem', background: 'rgba(248,81,73,0.1)', borderRadius: '4px' }}>{error}</div>}
         {success && <div style={{ color: 'var(--success)', marginBottom: '1rem', fontSize: '0.875rem', padding: '0.5rem', background: 'rgba(46,160,67,0.1)', borderRadius: '4px' }}>Transactions saved successfully!</div>}
         
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '1.5rem', marginBottom: '2rem' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: '1.5rem', marginBottom: '2rem' }}>
           <div className="input-group">
             <label className="input-label">Date *</label>
             <input 
@@ -236,6 +243,19 @@ const Transactions = () => {
               onChange={(e) => setChallanNo(e.target.value)}
             />
           </div>
+          <div className="input-group">
+            <label className="input-label">Firm / Company</label>
+            <select 
+              className="input-field" 
+              value={firm}
+              onChange={(e) => setFirm(e.target.value)}
+            >
+              <option value="MC">MC</option>
+              <option value="DKPT">DKPT</option>
+              <option value="MC-TUFTING">MC-TUFTING</option>
+              <option value="DKPT-TUFTING">DKPT-TUFTING</option>
+            </select>
+          </div>
         </div>
 
         <div className="items-list" style={{ border: '1px solid var(--border-color)', borderRadius: '0.5rem', padding: '1rem', background: 'rgba(0,0,0,0.2)' }}>
@@ -257,13 +277,17 @@ const Transactions = () => {
                 value={item.styleName}
                 onChange={(e) => handleStyleChange(index, e.target.value)}
               />
-              <input 
-                type="text" 
+              <select 
                 className="input-field" 
-                placeholder="Auto-gen or type..." 
                 value={item.batch_no}
                 onChange={(e) => updateItem(index, 'batch_no', e.target.value)}
-              />
+              >
+                <option value="">-- Select Batch --</option>
+                {item.nextBatch && <option value={item.nextBatch}>✨ Auto New ({item.nextBatch})</option>}
+                {item.pendingBatches?.map(b => (
+                  <option key={b} value={b}>{b} (Pending)</option>
+                ))}
+              </select>
               <input 
                 type="number" 
                 className="input-field" 
@@ -347,6 +371,7 @@ const Transactions = () => {
               <tr>
                 <th>Date</th>
                 <th>Challan</th>
+                <th>Firm</th>
                 <th>Batch</th>
                 <th>Style</th>
                 <th>IN</th>
@@ -363,7 +388,7 @@ const Transactions = () => {
                   return true;
                 })
                 .length === 0 ? (
-                <tr><td colSpan="7" style={{ textAlign: 'center' }}>No recent activity found</td></tr>
+                <tr><td colSpan="8" style={{ textAlign: 'center' }}>No recent activity found</td></tr>
               ) : (
                 recent
                 .filter(t => {
@@ -380,6 +405,14 @@ const Transactions = () => {
                       <tr key={t.id}>
                         <td><input type="date" className="input-field" style={{ padding: '0.2rem', width: '110px' }} value={editForm.date} onChange={e => setEditForm({...editForm, date: e.target.value})} /></td>
                         <td><input type="text" className="input-field" style={{ padding: '0.2rem', width: '80px' }} value={editForm.challan_no} onChange={e => setEditForm({...editForm, challan_no: e.target.value})} /></td>
+                        <td>
+                          <select className="input-field" style={{ padding: '0.2rem', width: '100px' }} value={editForm.firm} onChange={e => setEditForm({...editForm, firm: e.target.value})}>
+                            <option value="MC">MC</option>
+                            <option value="DKPT">DKPT</option>
+                            <option value="MC-TUFTING">MC-TUFTING</option>
+                            <option value="DKPT-TUFTING">DKPT-TUFTING</option>
+                          </select>
+                        </td>
                         <td><input type="text" className="input-field" style={{ padding: '0.2rem', width: '80px' }} value={editForm.batch_no} onChange={e => setEditForm({...editForm, batch_no: e.target.value})} /></td>
                         <td>{t.styles?.name}</td>
                         <td><input type="number" className="input-field" style={{ padding: '0.2rem', width: '60px' }} value={editForm.inward_qty} onChange={e => setEditForm({...editForm, inward_qty: e.target.value})} /></td>
@@ -398,6 +431,7 @@ const Transactions = () => {
                     <tr key={t.id}>
                       <td>{formattedDate}</td>
                       <td>{t.challan_no || '-'}</td>
+                      <td>{t.firm || '-'}</td>
                     <td><span className="badge badge-neutral">{t.batch_no || '-'}</span></td>
                     <td>{t.styles?.name}</td>
                     <td>{t.inward_qty > 0 ? <span className="badge badge-success">{t.inward_qty}</span> : '-'}</td>

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { getStyles } from '../lib/api';
+import { getStylesWithBalances } from '../lib/api';
 import { Package, ExternalLink } from 'lucide-react';
 import { Link } from 'react-router-dom';
 
@@ -10,7 +10,7 @@ const Styles = () => {
   useEffect(() => {
     async function loadData() {
       try {
-        const s = await getStyles();
+        const s = await getStylesWithBalances();
         setStyles(s);
       } catch (err) {
         console.error(err);
@@ -38,14 +38,16 @@ const Styles = () => {
               <tr>
                 <th>Style Name</th>
                 <th>Customer / Vendor</th>
-                <th>Unit</th>
+                <th>Total IN</th>
+                <th>Total OUT</th>
+                <th>Balance</th>
               </tr>
             </thead>
             <tbody>
               {loading ? (
-                <tr><td colSpan="4" style={{ textAlign: 'center' }}>Loading styles...</td></tr>
+                <tr><td colSpan="6" style={{ textAlign: 'center' }}>Loading styles...</td></tr>
               ) : styles.length === 0 ? (
-                <tr><td colSpan="4" style={{ textAlign: 'center' }}>No styles found</td></tr>
+                <tr><td colSpan="6" style={{ textAlign: 'center' }}>No styles found</td></tr>
               ) : (
                 styles.map(s => (
                   <tr key={s.id}>
@@ -55,7 +57,13 @@ const Styles = () => {
                       </Link>
                     </td>
                     <td>{s.vendors?.name || '-'}</td>
-                    <td>{s.unit}</td>
+                    <td><span className="badge badge-success">{s.stats?.in || 0}</span></td>
+                    <td><span className="badge badge-warning">{s.stats?.out || 0}</span></td>
+                    <td>
+                      <span className={`badge ${s.stats?.bal > 0 ? 'badge-primary' : 'badge-neutral'}`} style={{ fontSize: '1rem', padding: '0.4rem 0.8rem' }}>
+                        {s.stats?.bal || 0}
+                      </span>
+                    </td>
                   </tr>
                 ))
               )}
