@@ -1,8 +1,156 @@
 import React, { useState, useEffect } from 'react';
-import { getVendors, getStyles, ensureStyle, addTransaction, getRecentTransactions, getNextBatchNumber, getPendingBatchesForStyle, updateTransaction, deleteTransaction } from '../lib/api';
-import { Plus, Trash2, Save, Edit2, X, Check } from 'lucide-react';
+import { getVendors, getStyles, ensureStyle, addTransaction, getRecentTransactions, getNextBatchNumber, getBatchesByPartialStyle, getBatchLedger, updateTransaction, deleteTransaction } from '../lib/api';
+import { Plus, Trash2, Save, Edit2, X, Check, Info } from 'lucide-react';
+
+
+const BatchLedgerModal = ({ batchNo, onClose }) => {
+  const [ledger, setLedger] = React.useState([]);
+  const [loading, setLoading] = React.useState(true);
+
+  React.useEffect(() => {
+    getBatchLedger(batchNo).then(data => {
+      setLedger(data);
+      setLoading(false);
+    });
+  }, [batchNo]);
+
+  let totalIn = 0;
+  let totalOut = 0;
+
+  return (
+    <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.7)', zIndex: 1000, display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
+      <div className="glass-card" style={{ width: '90%', maxWidth: '700px', maxHeight: '80vh', display: 'flex', flexDirection: 'column' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+          <h2 style={{ fontSize: '1.25rem' }}>Batch Details: {batchNo}</h2>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', color: 'var(--text-primary)', cursor: 'pointer' }}><X /></button>
+        </div>
+        <div style={{ flex: 1, overflowY: 'auto' }}>
+          {loading ? (
+            <p>Loading ledger...</p>
+          ) : ledger.length === 0 ? (
+            <p>No history found for this batch.</p>
+          ) : (
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <thead>
+                <tr style={{ borderBottom: '1px solid var(--border-color)', textAlign: 'left' }}>
+                  <th style={{ padding: '0.5rem' }}>Date</th>
+                  <th style={{ padding: '0.5rem' }}>Firm</th>
+                  <th style={{ padding: '0.5rem' }}>Style</th>
+                  <th style={{ padding: '0.5rem' }}>IN</th>
+                  <th style={{ padding: '0.5rem' }}>OUT</th>
+                </tr>
+              </thead>
+              <tbody>
+                {ledger.map(tx => {
+                  const d = new Date(tx.date || tx.created_at);
+                  const formattedDate = `${String(d.getDate()).padStart(2, '0')}-${String(d.getMonth() + 1).padStart(2, '0')}-${d.getFullYear()}`;
+                  totalIn += Number(tx.inward_qty) || 0;
+                  totalOut += Number(tx.outward_qty) || 0;
+                  return (
+                    <tr key={tx.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+                      <td style={{ padding: '0.5rem' }}>{formattedDate}</td>
+                      <td style={{ padding: '0.5rem' }}>{tx.firm}</td>
+                      <td style={{ padding: '0.5rem' }}>{tx.styles?.name}</td>
+                      <td style={{ padding: '0.5rem', color: tx.inward_qty > 0 ? 'var(--success)' : 'inherit' }}>{tx.inward_qty || '-'}</td>
+                      <td style={{ padding: '0.5rem', color: tx.outward_qty > 0 ? 'var(--danger)' : 'inherit' }}>{tx.outward_qty || '-'}</td>
+                    </tr>
+                  );
+                })}
+                <tr style={{ fontWeight: 'bold', borderTop: '2px solid var(--border-color)' }}>
+                  <td colSpan="3" style={{ padding: '0.5rem', textAlign: 'right' }}>Current Stock Balance:</td>
+                  <td colSpan="2" style={{ padding: '0.5rem', color: totalIn - totalOut > 0 ? 'var(--success)' : 'var(--danger)' }}>
+                    {totalIn - totalOut}
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const SmartBatchDropdown = ({ item, updateBatch, onViewBatch }) => {
+  const [isOpen, setIsOpen] = React.useState(false);
+  const containerRef = React.useRef(null);
+
+  React.useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (containerRef.current && !containerRef.current.contains(event.target)) {
+        setIsOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  return (
+    <div ref={containerRef} style={{ position: 'relative', width: '100%' }}>
+      <input 
+        className="input-field" 
+        placeholder="Type or select batch..."
+        value={item.batch_no}
+        onChange={(e) => {
+          updateBatch(e.target.value);
+          setIsOpen(true);
+        }}
+        onFocus={() => setIsOpen(true)}
+        style={{ width: '100%', marginBottom: 0 }}
+      />
+      {isOpen && (
+        <div style={{
+          position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 10,
+          background: 'var(--card-bg)', border: '1px solid var(--border-color)',
+          borderRadius: '4px', maxHeight: '250px', overflowY: 'auto',
+          boxShadow: '0 4px 6px rgba(0,0,0,0.3)', marginTop: '4px'
+        }}>
+          {item.nextBatch && (
+            <div
+              onClick={() => { updateBatch(item.nextBatch); setIsOpen(false); }}
+              style={{ padding: '0.75rem', cursor: 'pointer', borderBottom: '1px solid var(--border-color)', display: 'flex', alignItems: 'center', gap: '0.5rem', fontWeight: 'bold', color: 'var(--primary)' }}
+              onMouseEnter={(e) => e.currentTarget.style.background = 'var(--bg-color)'}
+              onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+            >
+              <Plus size={16} /> NEW ({item.nextBatch})
+            </div>
+          )}
+          
+          {item.suggestedBatches && item.suggestedBatches.length > 0 && (
+            <div style={{ padding: '0.5rem', fontSize: '0.75rem', color: 'var(--text-secondary)', background: 'rgba(0,0,0,0.2)' }}>
+              Suggested Old Batches
+            </div>
+          )}
+
+          {item.suggestedBatches?.map((b, idx) => (
+            <div key={idx} style={{ display: 'flex', alignItems: 'center', borderBottom: '1px solid var(--border-color)' }}
+                 onMouseEnter={(e) => e.currentTarget.style.background = 'var(--bg-color)'}
+                 onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+            >
+              <div 
+                style={{ flex: 1, padding: '0.75rem', cursor: 'pointer' }}
+                onClick={() => { updateBatch(b.batch_no); setIsOpen(false); }}
+              >
+                <div style={{ fontWeight: 'bold' }}>{b.batch_no}</div>
+                <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Style: {b.style_name}</div>
+              </div>
+              <button 
+                onClick={(e) => { e.stopPropagation(); onViewBatch(b.batch_no); setIsOpen(false); }}
+                style={{ padding: '0.5rem', background: 'none', border: 'none', color: 'var(--accent-secondary)', cursor: 'pointer', marginRight: '0.5rem' }}
+                title="View Batch Ledger"
+              >
+                <Info size={18} />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
 
 const Transactions = () => {
+
   const [vendors, setVendors] = useState([]);
   const [styles, setStyles] = useState([]);
   const [recent, setRecent] = useState([]);
@@ -13,11 +161,12 @@ const Transactions = () => {
   const [firm, setFirm] = useState('MC');
   
   const [items, setItems] = useState([
-    { id: 1, styleName: '', batch_no: '', inward_qty: '', outward_qty: '', pendingBatches: [], nextBatch: '' }
+    { id: 1, styleName: '', batch_no: '', inward_qty: '', outward_qty: '', suggestedBatches: [], nextBatch: '' }
   ]);
   
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [viewingBatch, setViewingBatch] = useState(null);
   const [success, setSuccess] = useState(false);
 
   const [editingId, setEditingId] = useState(null);
@@ -86,23 +235,26 @@ const Transactions = () => {
     }
   }
 
-  const handleStyleChange = async (index, newStyleName) => {
-    const newItems = [...items];
-    newItems[index].styleName = newStyleName;
-    setItems(newItems);
+    const handleStyleChange = async (index, newStyleName) => {
+    setItems(prev => {
+      const newItems = [...prev];
+      newItems[index].styleName = newStyleName;
+      return newItems;
+    });
 
     if (newStyleName.length > 2) {
-      const existingStyle = styles.find(s => s.name.toLowerCase() === newStyleName.toLowerCase());
-      if (existingStyle) {
-        const pending = await getPendingBatchesForStyle(existingStyle.id);
-        const nextB = await getNextBatchNumber(existingStyle.name, transactionDate);
-        const updatedItems = [...items];
-        updatedItems[index].styleName = newStyleName;
-        updatedItems[index].pendingBatches = pending;
+      const nextB = await getNextBatchNumber(newStyleName, transactionDate);
+      const matchedBatches = await getBatchesByPartialStyle(newStyleName);
+      
+      setItems(prevItems => {
+        const updatedItems = [...prevItems];
+        updatedItems[index].suggestedBatches = matchedBatches;
         updatedItems[index].nextBatch = nextB;
-        updatedItems[index].batch_no = '';
-        setItems(updatedItems);
-      }
+        if (!updatedItems[index].batch_no) {
+          updatedItems[index].batch_no = nextB;
+        }
+        return updatedItems;
+      });
     }
   };
 
@@ -113,7 +265,7 @@ const Transactions = () => {
   };
 
   const addItem = () => {
-    setItems([...items, { id: Date.now(), styleName: '', batch_no: '', inward_qty: '', outward_qty: '', pendingBatches: [], nextBatch: '' }]);
+    setItems([...items, { id: Date.now(), styleName: '', batch_no: '', inward_qty: '', outward_qty: '', suggestedBatches: [], nextBatch: '' }]);
   };
 
   const handleKeyDown = (e, index) => {
@@ -133,7 +285,7 @@ const Transactions = () => {
   const removeItem = (index) => {
     const newItems = items.filter((_, i) => i !== index);
     if (newItems.length === 0) {
-      setItems([{ id: Date.now(), styleName: '', batch_no: '', inward_qty: '', outward_qty: '', pendingBatches: [], nextBatch: '' }]);
+      setItems([{ id: Date.now(), styleName: '', batch_no: '', inward_qty: '', outward_qty: '', suggestedBatches: [], nextBatch: '' }]);
     } else {
       setItems(newItems);
     }
@@ -185,7 +337,7 @@ const Transactions = () => {
       // Reset form
       setVendorName('');
       setChallanNo('');
-      setItems([{ id: Date.now(), styleName: '', batch_no: '', inward_qty: '', outward_qty: '', pendingBatches: [], nextBatch: '' }]);
+      setItems([{ id: Date.now(), styleName: '', batch_no: '', inward_qty: '', outward_qty: '', suggestedBatches: [], nextBatch: '' }]);
       loadInitialData();
     } catch (err) {
       setError(err.message);
@@ -199,6 +351,8 @@ const Transactions = () => {
       <header className="page-header">
         <h1 className="page-title">Transaction Manager (Multi-Entry)</h1>
       </header>
+      
+      {viewingBatch && <BatchLedgerModal batchNo={viewingBatch} onClose={() => setViewingBatch(null)} />}
       
       <div className="glass-card" style={{ marginBottom: '2rem' }}>
         <h2 style={{ marginBottom: '1.5rem', fontSize: '1.125rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
@@ -277,17 +431,11 @@ const Transactions = () => {
                 value={item.styleName}
                 onChange={(e) => handleStyleChange(index, e.target.value)}
               />
-              <select 
-                className="input-field" 
-                value={item.batch_no}
-                onChange={(e) => updateItem(index, 'batch_no', e.target.value)}
-              >
-                <option value="">-- Select Batch --</option>
-                {item.nextBatch && <option value={item.nextBatch}>✨ Auto New ({item.nextBatch})</option>}
-                {item.pendingBatches?.map(b => (
-                  <option key={b} value={b}>{b} (Pending)</option>
-                ))}
-              </select>
+                            <SmartBatchDropdown 
+                item={item} 
+                updateBatch={(val) => updateItem(index, 'batch_no', val)} 
+                onViewBatch={setViewingBatch}
+              />
               <input 
                 type="number" 
                 className="input-field" 

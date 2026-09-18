@@ -112,6 +112,38 @@ export async function getPendingBatchesForStyle(styleId) {
   return batches;
 }
 
+export async function getBatchesByPartialStyle(styleName) {
+  if (!styleName || styleName.length < 3) return [];
+  
+  // Try to find styles that share the first 5 characters
+  const prefix = styleName.substring(0, 5);
+  const { data: matchingStyles, error: styleErr } = await supabase.from('styles')
+    .select('id, name')
+    .ilike('name', `${prefix}%`);
+    
+  if (styleErr || !matchingStyles || matchingStyles.length === 0) return [];
+  
+  const styleIds = matchingStyles.map(s => s.id);
+  
+  const { data: tx, error: txErr } = await supabase.from('transactions')
+    .select('batch_no, style_id')
+    .in('style_id', styleIds)
+    .not('batch_no', 'is', null)
+    .order('created_at', { ascending: false });
+    
+  if (txErr) return [];
+  
+  const batchMap = new Map();
+  for (const t of tx) {
+    if (t.batch_no && !batchMap.has(t.batch_no)) {
+      const sName = matchingStyles.find(s => s.id === t.style_id)?.name;
+      batchMap.set(t.batch_no, sName);
+    }
+  }
+  
+  return Array.from(batchMap.entries()).map(([batch_no, style_name]) => ({ batch_no, style_name }));
+}
+
 export async function getNextBatchNumber(styleName, transactionDateStr = null) {
   if (!styleName) return '';
   
@@ -360,8 +392,17 @@ export async function getPartnerLedger(partnerName) {
   return data;
 }
 
+export async function getUniquePartners() {
+  const { data, error } = await supabase.from('partner_ledgers').select('partner_name');
+  if (error) throw error;
+  
+  const uniqueNames = [...new Set(data.map(item => item.partner_name).filter(Boolean))];
+  return uniqueNames.sort();
+}
+
 export async function addPartnerLedgerEntry(payload) {
-  const { error } = await supabase.from('partner_ledgers').insert([payload]);
+  const dataToInsert = Array.isArray(payload) ? payload : [payload];
+  const { error } = await supabase.from('partner_ledgers').insert(dataToInsert);
   if (error) throw error;
   return true;
 }
