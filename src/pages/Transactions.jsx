@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { getVendors, getStyles, ensureStyle, addTransaction, getRecentTransactions, getNextBatchNumber, getBatchesByPartialStyle, getBatchLedger, updateTransaction, deleteTransaction } from '../lib/api';
+import { getVendors, getStyles, ensureStyle, ensureVendor, addTransaction, getRecentTransactions, getNextBatchNumber, getBatchesByPartialStyle, getBatchLedger, updateTransaction, deleteTransaction } from '../lib/api';
 import { Plus, Trash2, Save, Edit2, X, Check, Info } from 'lucide-react';
 
 
@@ -228,7 +228,7 @@ const Transactions = () => {
       setVendors(v);
       const s = await getStyles();
       setStyles(s);
-      const r = await getRecentTransactions();
+      const r = await getRecentTransactions(10000);
       setRecent(r);
     } catch (err) {
       console.error(err);
@@ -306,13 +306,7 @@ const Transactions = () => {
         throw new Error("Please add at least one valid item with quantity");
       }
       
-      let vendor_id = null;
-      const existingVendor = vendors.find(v => v.name.toLowerCase() === vendorName.toLowerCase());
-      if (existingVendor) {
-        vendor_id = existingVendor.id;
-      } else {
-        throw new Error("Please select an existing Customer from Master Data");
-      }
+      let vendor_id = await ensureVendor(vendorName);
 
       const transactionsToInsert = [];
       // Combine selected date with current time for timestamp if needed, or just send date
@@ -513,7 +507,7 @@ const Transactions = () => {
             )}
           </div>
         </div>
-        <div className="table-container" style={{ border: 'none', borderRadius: 0 }}>
+        <div className="table-container" style={{ border: 'none', borderRadius: 0, maxHeight: '500px', overflowY: 'auto' }}>
           <table>
             <thead>
               <tr>

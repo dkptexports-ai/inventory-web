@@ -14,6 +14,16 @@ export async function addVendor(name, place = '') {
   return data;
 }
 
+export async function ensureVendor(vendorName, place = '') {
+  if (!vendorName) return null;
+  const { data: existing } = await supabase.from('vendors').select('id').ilike('name', vendorName).single();
+  if (existing) return existing.id;
+  
+  const { data: newVendor, error } = await supabase.from('vendors').insert([{ name: vendorName, place }]).select().single();
+  if (error) throw error;
+  return newVendor.id;
+}
+
 // Styles
 export async function getStyles(vendorId = null) {
   let query = supabase.from('styles').select('*, vendors(name)');
