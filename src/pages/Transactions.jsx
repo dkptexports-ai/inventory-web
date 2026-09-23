@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { getVendors, getStyles, ensureStyle, ensureVendor, addTransaction, getRecentTransactions, getNextBatchNumber, getBatchesByPartialStyle, getBatchLedger, updateTransaction, deleteTransaction } from '../lib/api';
+import { getVendors, getStyles, ensureStyle, ensureVendor, addTransaction, getRecentTransactions, getNextBatchNumber, getBatchesByExactStyle, getBatchLedger, updateTransaction, deleteTransaction } from '../lib/api';
 import { Plus, Trash2, Save, Edit2, X, Check, Info } from 'lucide-react';
 
 
@@ -71,6 +71,60 @@ const BatchLedgerModal = ({ batchNo, onClose }) => {
   );
 };
 
+const SmartStyleDropdown = ({ item, updateStyle, styles }) => {
+  const [isOpen, setIsOpen] = React.useState(false);
+  const containerRef = React.useRef(null);
+  
+  React.useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (containerRef.current && !containerRef.current.contains(event.target)) {
+        setIsOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  const filteredStyles = styles.filter(s => s.name.toLowerCase().includes(item.styleName.toLowerCase()));
+
+  return (
+    <div ref={containerRef} style={{ position: 'relative', width: '100%' }}>
+      <input 
+        type="text"
+        className="input-field style-input" 
+        placeholder="Style Name..."
+        value={item.styleName}
+        onChange={(e) => {
+          updateStyle(e.target.value);
+          setIsOpen(true);
+        }}
+        onFocus={() => setIsOpen(true)}
+        style={{ width: '100%', marginBottom: 0 }}
+      />
+      {isOpen && filteredStyles.length > 0 && (
+        <div style={{
+          position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 50,
+          background: 'var(--card-bg)', border: '1px solid var(--border-color)',
+          borderRadius: '4px', maxHeight: '250px', overflowY: 'auto',
+          boxShadow: '0 4px 12px rgba(0,0,0,0.5)', marginTop: '4px'
+        }}>
+          {filteredStyles.map(s => (
+            <div 
+              key={s.id}
+              onClick={() => { updateStyle(s.name); setIsOpen(false); }}
+              style={{ padding: '0.75rem', cursor: 'pointer', borderBottom: '1px solid var(--border-color)' }}
+              onMouseEnter={(e) => e.currentTarget.style.background = 'var(--bg-color)'}
+              onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+            >
+              {s.name}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
+
 const SmartBatchDropdown = ({ item, updateBatch, onViewBatch }) => {
   const [isOpen, setIsOpen] = React.useState(false);
   const containerRef = React.useRef(null);
@@ -132,7 +186,14 @@ const SmartBatchDropdown = ({ item, updateBatch, onViewBatch }) => {
                 onClick={() => { updateBatch(b.batch_no); setIsOpen(false); }}
               >
                 <div style={{ fontWeight: 'bold' }}>{b.batch_no}</div>
-                <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Style: {b.style_name}</div>
+                <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', display: 'flex', gap: '1rem' }}>
+                  <span>Style: {b.style_name}</span>
+                  {b.balance !== undefined && (
+                    <span style={{ color: b.balance > 0 ? 'var(--success)' : (b.balance < 0 ? 'var(--danger)' : 'inherit') }}>
+                      Stock: {b.balance}
+                    </span>
+                  )}
+                </div>
               </div>
               <button 
                 onClick={(e) => { e.stopPropagation(); onViewBatch(b.batch_no); setIsOpen(false); }}
@@ -244,7 +305,7 @@ const Transactions = () => {
 
     if (newStyleName.length > 2) {
       const nextB = await getNextBatchNumber(newStyleName, transactionDate);
-      const matchedBatches = await getBatchesByPartialStyle(newStyleName);
+      const matchedBatches = await getBatchesByExactStyle(newStyleName);
       
       setItems(prevItems => {
         const updatedItems = [...prevItems];
@@ -417,13 +478,10 @@ const Transactions = () => {
           
           {items.map((item, index) => (
             <div key={item.id} style={{ display: 'grid', gridTemplateColumns: '3fr 2fr 1.5fr 1.5fr 0.5fr', gap: '1rem', marginBottom: '1rem', alignItems: 'center' }}>
-              <input 
-                list="styles-list"
-                type="text" 
-                className="input-field style-input" 
-                placeholder="Style Name..." 
-                value={item.styleName}
-                onChange={(e) => handleStyleChange(index, e.target.value)}
+              <SmartStyleDropdown 
+                item={item} 
+                styles={styles} 
+                updateStyle={(val) => handleStyleChange(index, val)} 
               />
                             <SmartBatchDropdown 
                 item={item} 
@@ -451,11 +509,7 @@ const Transactions = () => {
               </button>
             </div>
           ))}
-          <datalist id="styles-list">
-            {styles.map(s => (
-              <option key={s.id} value={s.name} />
-            ))}
-          </datalist>
+
 
           <button className="btn btn-secondary" style={{ marginTop: '0.5rem', fontSize: '0.75rem', padding: '0.5rem 1rem' }} onClick={addItem}>
             <Plus size={14} /> Add Another Item

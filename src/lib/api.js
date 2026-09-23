@@ -122,36 +122,42 @@ export async function getPendingBatchesForStyle(styleId) {
   return batches;
 }
 
-export async function getBatchesByPartialStyle(styleName) {
-  if (!styleName || styleName.length < 3) return [];
+export async function getBatchesByExactStyle(styleName) {
+  if (!styleName) return [];
   
-  // Try to find styles that share the first 5 characters
-  const prefix = styleName.substring(0, 5);
-  const { data: matchingStyles, error: styleErr } = await supabase.from('styles')
+  const { data: styleData, error: styleErr } = await supabase.from('styles')
     .select('id, name')
-    .ilike('name', `${prefix}%`);
+    .eq('name', styleName)
+    .single();
     
-  if (styleErr || !matchingStyles || matchingStyles.length === 0) return [];
+  if (styleErr || !styleData) return [];
   
-  const styleIds = matchingStyles.map(s => s.id);
+  const styleId = styleData.id;
   
   const { data: tx, error: txErr } = await supabase.from('transactions')
-    .select('batch_no, style_id')
-    .in('style_id', styleIds)
-    .not('batch_no', 'is', null)
-    .order('created_at', { ascending: false });
+    .select('batch_no, inward_qty, outward_qty, created_at, date')
+    .eq('style_id', styleId)
+    .not('batch_no', 'is', null);
     
-  if (txErr) return [];
+  if (txErr || !tx) return [];
   
   const batchMap = new Map();
   for (const t of tx) {
-    if (t.batch_no && !batchMap.has(t.batch_no)) {
-      const sName = matchingStyles.find(s => s.id === t.style_id)?.name;
-      batchMap.set(t.batch_no, sName);
+    if (!batchMap.has(t.batch_no)) {
+      batchMap.set(t.batch_no, { 
+        batch_no: t.batch_no, 
+        style_name: styleData.name,
+        balance: 0,
+        latest_date: new Date(0).getTime()
+      });
     }
+    const b = batchMap.get(t.batch_no);
+    b.balance += (Number(t.inward_qty) || 0) - (Number(t.outward_qty) || 0);
+    const tDate = new Date(t.date || t.created_at).getTime();
+    if (tDate > b.latest_date) b.latest_date = tDate;
   }
   
-  return Array.from(batchMap.entries()).map(([batch_no, style_name]) => ({ batch_no, style_name }));
+  return Array.from(batchMap.values()).sort((a, b) => b.latest_date - a.latest_date);
 }
 
 export async function getNextBatchNumber(styleName, transactionDateStr = null) {
@@ -237,32 +243,57 @@ export async function getPendingChallans() {
   return data;
 }
 
-export async function getPendingBatchesForBilling() {
-  const { data, error } = await supabase.from('transactions')
+export async function getBatchesForBilling() {
+  const { data: pendingTx, error } = await supabase.from('transactions')
     .select('*, styles(name, vendors(name))')
-    .eq('bill_status', 'Pending')
     .not('batch_no', 'is', null)
     .gt('outward_qty', 0);
   if (error) throw error;
   
+  if (!pendingTx || pendingTx.length === 0) return [];
+
+  const uniqueBatchNos = [...new Set(pendingTx.map(t => t.batch_no))];
+  
+  const { data: allTxForBatches, error: balErr } = await supabase.from('transactions')
+    .select('batch_no, inward_qty, outward_qty')
+    .in('batch_no', uniqueBatchNos);
+    
+  if (balErr) throw balErr;
+  
+  const batchBalances = {};
+  for (const t of allTxForBatches) {
+    if (!batchBalances[t.batch_no]) batchBalances[t.batch_no] = 0;
+    batchBalances[t.batch_no] += (Number(t.inward_qty) || 0) - (Number(t.outward_qty) || 0);
+  }
+  
   const batchesMap = {};
-  for (const t of data) {
+  for (const t of pendingTx) {
+    const balance = batchBalances[t.batch_no] || 0;
+    if (balance > 0) continue; 
+    
     if (!batchesMap[t.batch_no]) {
       batchesMap[t.batch_no] = {
-        id: t.batch_no, // Use batch_no as id for react keys
+        id: t.batch_no,
         batch_no: t.batch_no,
         styles: t.styles,
         firm: t.firm,
         date: t.date || t.created_at,
-        outward_qty: 0,
+        balance: balance,
+        bill_status: t.bill_status,
         transaction_ids: []
       };
+    } else {
+      if (t.bill_status === 'Pending') {
+        batchesMap[t.batch_no].bill_status = 'Pending';
+      }
     }
-    batchesMap[t.batch_no].outward_qty += Number(t.outward_qty) || 0;
-    batchesMap[t.batch_no].transaction_ids.push(t.id);
+    // Only collect pending transaction IDs for billing later if we want to bill them
+    if (t.bill_status === 'Pending') {
+      batchesMap[t.batch_no].transaction_ids.push(t.id);
+    }
   }
   
-  return Object.values(batchesMap).sort((a, b) => new Date(b.date) - new Date(a.date));
+  return Object.values(batchesMap);
 }
 
 export async function markAsBilled(transactionIds, invoiceNo, invoiceDate) {
