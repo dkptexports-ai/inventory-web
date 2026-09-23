@@ -113,7 +113,7 @@ const BatchLedger = () => {
                 <th>Firm</th>
                 <th style={{ textAlign: 'right' }}>IN</th>
                 <th style={{ textAlign: 'right' }}>OUT</th>
-                <th style={{ textAlign: 'right', backgroundColor: 'rgba(99, 102, 241, 0.1)' }}>Balance</th>
+                <th style={{ textAlign: 'right' }}>Balance</th>
               </tr>
             </thead>
             <tbody>

@@ -11,7 +11,17 @@ const Styles = () => {
     async function loadData() {
       try {
         const s = await getStylesWithBalances();
-        setStyles(s);
+        const sortedStyles = [...s].sort((a, b) => {
+          const vendorA = (a.vendors?.name || '').toLowerCase();
+          const vendorB = (b.vendors?.name || '').toLowerCase();
+          if (vendorA < vendorB) return -1;
+          if (vendorA > vendorB) return 1;
+          
+          const styleA = (a.name || '').toString();
+          const styleB = (b.name || '').toString();
+          return styleA.localeCompare(styleB, undefined, { numeric: true, sensitivity: 'base' });
+        });
+        setStyles(sortedStyles);
       } catch (err) {
         console.error(err);
       } finally {
