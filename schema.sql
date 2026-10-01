@@ -134,3 +134,59 @@ CREATE POLICY "Allow public read/write on attendance" ON attendance FOR ALL USIN
 
 DROP POLICY IF EXISTS "Allow public read/write on salary_payments" ON salary_payments;
 CREATE POLICY "Allow public read/write on salary_payments" ON salary_payments FOR ALL USING (true) WITH CHECK (true);
+
+-- Create customer_receipts table
+CREATE TABLE IF NOT EXISTS customer_receipts (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  date DATE,
+  description TEXT,
+  amount NUMERIC DEFAULT 0,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Create purchase_register table
+CREATE TABLE IF NOT EXISTS purchase_register (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  date DATE,
+  supplier_name TEXT,
+  invoice_no TEXT,
+  amount NUMERIC DEFAULT 0,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Create partner_ledgers table
+CREATE TABLE IF NOT EXISTS partner_ledgers (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  partner_name TEXT,
+  date DATE,
+  description TEXT,
+  expense NUMERIC DEFAULT 0,
+  receipt NUMERIC DEFAULT 0,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Create pnl_manual_expenses table
+CREATE TABLE IF NOT EXISTS pnl_manual_expenses (
+  head_name TEXT PRIMARY KEY,
+  amount NUMERIC DEFAULT 0,
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Enable RLS for new tables
+ALTER TABLE customer_receipts ENABLE ROW LEVEL SECURITY;
+ALTER TABLE purchase_register ENABLE ROW LEVEL SECURITY;
+ALTER TABLE partner_ledgers ENABLE ROW LEVEL SECURITY;
+ALTER TABLE pnl_manual_expenses ENABLE ROW LEVEL SECURITY;
+
+-- Allow public access for now (internal tool)
+DROP POLICY IF EXISTS "Allow public read/write on customer_receipts" ON customer_receipts;
+CREATE POLICY "Allow public read/write on customer_receipts" ON customer_receipts FOR ALL USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Allow public read/write on purchase_register" ON purchase_register;
+CREATE POLICY "Allow public read/write on purchase_register" ON purchase_register FOR ALL USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Allow public read/write on partner_ledgers" ON partner_ledgers;
+CREATE POLICY "Allow public read/write on partner_ledgers" ON partner_ledgers FOR ALL USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Allow public read/write on pnl_manual_expenses" ON pnl_manual_expenses;
+CREATE POLICY "Allow public read/write on pnl_manual_expenses" ON pnl_manual_expenses FOR ALL USING (true) WITH CHECK (true);

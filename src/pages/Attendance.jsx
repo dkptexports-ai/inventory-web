@@ -18,13 +18,23 @@ const Attendance = () => {
   const [mode, setMode] = useState('grid'); // 'grid' or 'daily'
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
   const [dailyData, setDailyData] = useState({});
+  const [isDateLoaded, setIsDateLoaded] = useState(false);
   
   // Calculate dynamic days array based on Date Range or Month
   const [gridDays, setGridDays] = useState([]);
 
   useEffect(() => {
-    loadData();
-  }, [month, year, useDateRange, fromDate, toDate, filterCompanyId]);
+    if (mode === 'grid') {
+      loadData();
+    }
+  }, [month, year, useDateRange, fromDate, toDate, filterCompanyId, mode]);
+
+  useEffect(() => {
+    if (mode === 'daily') {
+      setIsDateLoaded(false);
+      setDailyData({}); // Clear unsaved daily data on date change
+    }
+  }, [selectedDate, mode, filterCompanyId]);
 
   const loadData = async () => {
     try {
@@ -78,9 +88,10 @@ const Attendance = () => {
     }
   };
 
-  useEffect(() => {
-    if (mode === 'daily') loadData();
-  }, [selectedDate, mode, filterCompanyId]);
+  const handleLoadDaily = async () => {
+    await loadData();
+    setIsDateLoaded(true);
+  };
 
   const handleCellClick = (employee, dateStr) => {
     const currentStatus = attendanceData[`${employee.id}_${dateStr}`]?.status || 'absent';
@@ -126,6 +137,10 @@ const Attendance = () => {
   };
 
   const handleSaveDaily = async () => {
+    if (!isDateLoaded) {
+      alert("Please load date first before saving.");
+      return;
+    }
     const records = Object.values(dailyData).filter(record => record.status);
     try {
       await saveAttendance(records);
@@ -147,7 +162,39 @@ const Attendance = () => {
       default: return '';
     }
   };
+
+  const parseStatusInitial = (initial) => {
+    switch (initial.toUpperCase()) {
+      case 'P': return 'present';
+      case 'A': return 'absent';
+      case 'H': return 'half';
+      case 'D': return 'double';
+      case 'F': return 'fine';
+      default: return '';
+    }
+  }
   
+  const getCompanyInitial = (companyId) => {
+    if (!companyId) return '';
+    if (['G', 'P', 'T'].includes(companyId)) return companyId; // fallback
+    const comp = companies.find(c => c.id === companyId);
+    if (!comp) return '';
+    const name = comp.name.toLowerCase();
+    if (name.includes('ganaur') || name.startsWith('g')) return 'G';
+    if (name.includes('panipat') || name.startsWith('p')) return 'P';
+    if (name.includes('tufting') || name.startsWith('t')) return 'T';
+    return name.charAt(0).toUpperCase();
+  };
+
+  const parseCompanyInitial = (initial) => {
+    const val = initial.toUpperCase();
+    let compId = '';
+    if (val === 'G') compId = companies.find(c => c.name.toLowerCase().includes('ganaur') || c.name.toLowerCase().startsWith('g'))?.id;
+    if (val === 'P') compId = companies.find(c => c.name.toLowerCase().includes('panipat') || c.name.toLowerCase().startsWith('p'))?.id;
+    if (val === 'T') compId = companies.find(c => c.name.toLowerCase().includes('tufting') || c.name.toLowerCase().startsWith('t'))?.id;
+    return compId || val; // Fallback to 'G'/'P'/'T' string if not found so it shows up in UI at least
+  };
+
   const getStatusColor = (status) => {
     switch (status) {
       case 'present': return 'var(--success)';
@@ -159,8 +206,34 @@ const Attendance = () => {
     }
   };
 
+  const handleKeyDown = (e, colName, rowIndex) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      const nextInput = document.querySelector(`input[data-col="${colName}"][data-rowindex="${rowIndex + 1}"]`);
+      if (nextInput) {
+        nextInput.focus();
+        nextInput.select();
+      }
+    }
+  };
+
+  const handleStatusInputChange = (empId, e) => {
+    const val = e.target.value.slice(-1).toUpperCase();
+    if (val === '' || ['P', 'A', 'H', 'D', 'F'].includes(val)) {
+      const statusStr = parseStatusInitial(val);
+      handleDailyChange(empId, 'status', statusStr);
+    }
+  };
+
+  const handleCompanyInputChange = (empId, e) => {
+    const val = e.target.value.slice(-1).toUpperCase();
+    if (val === '' || ['G', 'P', 'T'].includes(val)) {
+      const compId = parseCompanyInitial(val);
+      handleDailyChange(empId, 'company_id', compId);
+    }
+  };
+
   const isEmployeeActiveForDate = (emp, dateStr) => {
-    // If they are active, they are available. If they left, they are only available on or before their left_date.
     if (emp.is_active !== false) return true;
     if (emp.left_date && dateStr <= emp.left_date) return true;
     return false;
@@ -168,14 +241,10 @@ const Attendance = () => {
 
   const filteredEmployeesGrid = employees.filter(emp => {
     if (filterCompanyId) {
-      // Check if they have ANY attendance in the loaded data for the selected company
       return Object.values(attendanceData).some(a => a.employee_id === emp.id && a.company_id === filterCompanyId);
     }
-    
     const hasData = Object.values(attendanceData).some(a => a.employee_id === emp.id);
     const hasBalance = (emp.opening_balance || 0) !== 0;
-    
-    // User requested: "agar kuch bhi balance ya data aa raha hai to wo employee only show karega"
     return hasData || hasBalance;
   });
 
@@ -288,74 +357,86 @@ const Attendance = () => {
       ) : (
         <>
           <div className="glass-card" style={{ marginBottom: '2rem' }}>
-            <div style={{ display: 'flex', gap: '2rem', alignItems: 'flex-start', flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', gap: '2rem', alignItems: 'flex-end', flexWrap: 'wrap' }}>
               <div className="input-group" style={{ maxWidth: '250px' }}>
                 <label className="input-label">Select Date for Entry</label>
                 <input type="date" className="input-field" value={selectedDate} onChange={e => setSelectedDate(e.target.value)} />
               </div>
+              <button className="btn btn-primary" onClick={handleLoadDaily}>Load Date</button>
               
               <div style={{ background: '#eff6ff', padding: '1rem', borderRadius: '0.5rem', border: '1px solid #bfdbfe', flex: 1, color: '#1e3a8a' }}>
-                <strong>Note on Editing:</strong> Past attendance records can be edited directly here. Just select the past date above, make your changes in the table below, and click <strong>Save Daily Entries</strong>. The system will update the existing records automatically. Only active employees on the selected date are shown.
+                <strong>Note on Editing:</strong> First select a date and click <strong>Load Date</strong> to fetch existing entries. Then make changes in the table below, use <strong>Enter</strong> to move down, and click <strong>Save Daily Entries</strong> when done.
               </div>
             </div>
           </div>
 
-          <div className="glass-card" style={{ padding: '1rem', overflowX: 'auto' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-              <h3>Daily Entries - {selectedDate}</h3>
-              <button className="btn btn-primary" onClick={handleSaveDaily}>Save Daily Entries</button>
-            </div>
-            
-            <table className="table-container" style={{ width: '100%', fontSize: '0.85rem' }}>
-              <thead>
-                <tr>
-                  <th>Employee</th>
-                  <th>Status</th>
-                  <th>Company</th>
-                  <th>Target Qty</th>
-                  <th>Prod. Qty</th>
-                  <th>OT (Hrs)</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredEmployeesDaily.length === 0 ? (
+          {isDateLoaded && (
+            <div className="glass-card" style={{ padding: '1rem', overflowX: 'auto' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+                <h3>Daily Entries - {selectedDate}</h3>
+                <button className="btn btn-primary" onClick={handleSaveDaily}>Save Daily Entries</button>
+              </div>
+              
+              <table className="table-container" style={{ width: '100%', fontSize: '0.85rem' }}>
+                <thead>
                   <tr>
-                    <td colSpan="6" style={{ textAlign: 'center' }}>No active employees found for this date.</td>
+                    <th>Employee</th>
+                    <th>Days</th>
+                    <th>Company</th>
+                    <th>Target Qty</th>
+                    <th>Prod. Qty</th>
+                    <th>OT (Hrs)</th>
                   </tr>
-                ) : (
-                  filteredEmployeesDaily.map(emp => {
-                    const entry = dailyData[emp.id] || { status: 'absent', company_id: '', production_target: 300000, production_qty: '', overtime_hours: '' };
-                    return (
-                      <tr key={emp.id}>
-                        <td style={{ fontWeight: 600 }}>
-                          {emp.name}
-                          {!emp.is_active && <span className="badge badge-danger" style={{ marginLeft: '0.5rem' }}>Left</span>}
-                        </td>
-                        <td>
-                          <select className="input-field" style={{ padding: '0.25rem' }} value={entry.status || 'absent'} onChange={(e) => handleDailyChange(emp.id, 'status', e.target.value)}>
-                            <option value="absent">Absent (A)</option>
-                            <option value="present">Present (P)</option>
-                            <option value="half">Half Day (H)</option>
-                            <option value="double">Double (D)</option>
-                            <option value="fine">Fine (F)</option>
-                          </select>
-                        </td>
-                        <td>
-                          <select className="input-field" style={{ padding: '0.25rem' }} value={entry.company_id || ''} onChange={(e) => handleDailyChange(emp.id, 'company_id', e.target.value)}>
-                            <option value="">-- None --</option>
-                            {companies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                          </select>
-                        </td>
-                        <td><input type="number" className="input-field" style={{ width: '90px', padding: '0.25rem' }} placeholder="Target" value={entry.production_target ?? 300000} onChange={(e) => handleDailyChange(emp.id, 'production_target', Number(e.target.value))} /></td>
-                        <td><input type="number" className="input-field" style={{ width: '80px', padding: '0.25rem' }} placeholder="Qty" value={entry.production_qty || ''} onChange={(e) => handleDailyChange(emp.id, 'production_qty', Number(e.target.value))} /></td>
-                        <td><input type="number" className="input-field" style={{ width: '80px', padding: '0.25rem' }} placeholder="OT Hrs" value={entry.overtime_hours || ''} onChange={(e) => handleDailyChange(emp.id, 'overtime_hours', Number(e.target.value))} /></td>
-                      </tr>
-                    );
-                  })
-                )}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody>
+                  {filteredEmployeesDaily.length === 0 ? (
+                    <tr>
+                      <td colSpan="6" style={{ textAlign: 'center' }}>No active employees found for this date.</td>
+                    </tr>
+                  ) : (
+                    filteredEmployeesDaily.map((emp, index) => {
+                      const entry = dailyData[emp.id] || { status: '', company_id: '', production_target: '', production_qty: '', overtime_hours: '' };
+                      return (
+                        <tr key={emp.id}>
+                          <td style={{ fontWeight: 600 }}>
+                            {emp.name}
+                            {!emp.is_active && <span className="badge badge-danger" style={{ marginLeft: '0.5rem' }}>Left</span>}
+                          </td>
+                          <td>
+                            <input 
+                              type="text" 
+                              className="input-field" 
+                              style={{ width: '60px', padding: '0.25rem', textAlign: 'center', textTransform: 'uppercase' }} 
+                              value={getStatusInitial(entry.status)} 
+                              onChange={(e) => handleStatusInputChange(emp.id, e)}
+                              onKeyDown={(e) => handleKeyDown(e, 'status', index)}
+                              data-col="status"
+                              data-rowindex={index}
+                            />
+                          </td>
+                          <td>
+                            <input 
+                              type="text" 
+                              className="input-field" 
+                              style={{ width: '80px', padding: '0.25rem', textAlign: 'center', textTransform: 'uppercase' }} 
+                              value={getCompanyInitial(entry.company_id)} 
+                              onChange={(e) => handleCompanyInputChange(emp.id, e)}
+                              onKeyDown={(e) => handleKeyDown(e, 'company_id', index)}
+                              data-col="company_id"
+                              data-rowindex={index}
+                            />
+                          </td>
+                          <td><input type="number" className="input-field" style={{ width: '90px', padding: '0.25rem' }} placeholder="Target" value={entry.production_target ?? ''} onChange={(e) => handleDailyChange(emp.id, 'production_target', Number(e.target.value))} onKeyDown={(e) => handleKeyDown(e, 'production_target', index)} data-col="production_target" data-rowindex={index} /></td>
+                          <td><input type="number" className="input-field" style={{ width: '80px', padding: '0.25rem' }} placeholder="Qty" value={entry.production_qty || ''} onChange={(e) => handleDailyChange(emp.id, 'production_qty', Number(e.target.value))} onKeyDown={(e) => handleKeyDown(e, 'production_qty', index)} data-col="production_qty" data-rowindex={index} /></td>
+                          <td><input type="number" className="input-field" style={{ width: '80px', padding: '0.25rem' }} placeholder="OT Hrs" value={entry.overtime_hours || ''} onChange={(e) => handleDailyChange(emp.id, 'overtime_hours', Number(e.target.value))} onKeyDown={(e) => handleKeyDown(e, 'overtime_hours', index)} data-col="overtime_hours" data-rowindex={index} /></td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
+          )}
         </>
       )}
     </div>

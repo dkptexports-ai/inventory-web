@@ -14,6 +14,10 @@ const ProfitAndLoss = () => {
   const [error, setError] = useState(null);
   const [savingManual, setSavingManual] = useState(false);
 
+  // Date Range Filter State
+  const [startDate, setStartDate] = useState('');
+  const [endDate, setEndDate] = useState('');
+
   // Data States
   const [receipts, setReceipts] = useState([]);
   const [purchases, setPurchases] = useState([]);
@@ -56,21 +60,37 @@ const ProfitAndLoss = () => {
         getPnlManualExpenses()
       ]);
 
+      // Filter function based on date range
+      const isMatch = (dateStr) => {
+        if (!dateStr) return false;
+        const d = new Date(dateStr.split('T')[0]).getTime();
+        
+        if (startDate && endDate) {
+            return d >= new Date(startDate).getTime() && d <= new Date(endDate).getTime();
+        } else if (startDate) {
+            return d >= new Date(startDate).getTime();
+        } else if (endDate) {
+            return d <= new Date(endDate).getTime();
+        }
+        
+        return true; // All time
+      };
+
       // Income (Receipts)
-      setReceipts(recData);
+      setReceipts(recData.filter(r => isMatch(r.date)));
 
       // Purchases
-      setPurchases(purData);
+      setPurchases(purData.filter(p => isMatch(p.date)));
 
       // Partner Expenses (Sum of 'expense' column)
-      setAnilExpenses(anilData.reduce((sum, item) => sum + (Number(item.expense) || 0), 0));
-      setKarambirExpenses(karambirData.reduce((sum, item) => sum + (Number(item.expense) || 0), 0));
+      setAnilExpenses(anilData.filter(a => isMatch(a.date)).reduce((sum, item) => sum + (Number(item.expense) || 0), 0));
+      setKarambirExpenses(karambirData.filter(k => isMatch(k.date)).reduce((sum, item) => sum + (Number(item.expense) || 0), 0));
 
       // Salaries (Filter by company name from the joined table if it exists, otherwise fallback to logic)
       let dkptSum = 0;
       let malikSum = 0;
       
-      salaryData.forEach(sal => {
+      salaryData.filter(s => isMatch(s.payment_date)).forEach(sal => {
         const amt = (Number(sal.amount_cash) || 0) + (Number(sal.amount_bank) || 0);
         // Assuming companies(name) is available via the join
         const compName = sal.companies?.name?.toLowerCase() || '';
@@ -83,7 +103,7 @@ const ProfitAndLoss = () => {
       setDkptSalary(dkptSum);
       setMalikSalary(malikSum);
 
-      // Manual Expenses
+      // Manual Expenses (Assuming these are fixed monthly expenses, so we show them as is)
       if (manualData && manualData.length > 0) {
         const manualMap = { ...manualExpenses };
         manualData.forEach(item => {
@@ -101,6 +121,11 @@ const ProfitAndLoss = () => {
       setLoading(false);
     }
   };
+
+  // Refetch when date range changes
+  useEffect(() => {
+    fetchPnlData();
+  }, [startDate, endDate]);
 
   const handleManualExpenseChange = (key, value) => {
     setManualExpenses(prev => ({
@@ -144,7 +169,36 @@ const ProfitAndLoss = () => {
     <div style={{ paddingBottom: '4rem' }}>
       <header className="page-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <h1 className="page-title">Profit & Loss Statement</h1>
-        <button className="btn btn-secondary" onClick={fetchPnlData}>Refresh Data</button>
+        <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            <label style={{ fontSize: '0.875rem', color: 'var(--text-secondary)' }}>From:</label>
+            <input 
+              type="date" 
+              className="input-field" 
+              style={{ marginBottom: 0, width: 'auto' }} 
+              value={startDate} 
+              onChange={(e) => setStartDate(e.target.value)} 
+            />
+            <label style={{ fontSize: '0.875rem', color: 'var(--text-secondary)' }}>To:</label>
+            <input 
+              type="date" 
+              className="input-field" 
+              style={{ marginBottom: 0, width: 'auto' }} 
+              value={endDate} 
+              onChange={(e) => setEndDate(e.target.value)} 
+            />
+            {(startDate || endDate) && (
+              <button 
+                className="btn btn-secondary" 
+                style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem' }} 
+                onClick={() => { setStartDate(''); setEndDate(''); }}
+              >
+                Clear
+              </button>
+            )}
+          </div>
+          <button className="btn btn-secondary" onClick={fetchPnlData}>Refresh Data</button>
+        </div>
       </header>
       
       {error && <div style={{ color: 'var(--danger)', padding: '1rem', background: 'rgba(248,81,73,0.1)', marginBottom: '1rem', borderRadius: '4px' }}>{error}</div>}

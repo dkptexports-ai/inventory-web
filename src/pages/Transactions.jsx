@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { getVendors, getStyles, ensureStyle, ensureVendor, addTransaction, getRecentTransactions, getNextBatchNumber, getBatchesByExactStyle, getBatchLedger, updateTransaction, deleteTransaction } from '../lib/api';
+import { getVendors, getStyles, getStylesWithBalances, ensureStyle, ensureVendor, addTransaction, getRecentTransactions, getNextBatchNumber, getBatchesByExactStyle, getBatchLedger, updateTransaction, deleteTransaction } from '../lib/api';
 import { Plus, Trash2, Save, Edit2, X, Check, Info } from 'lucide-react';
 
 
@@ -104,7 +104,7 @@ const SmartStyleDropdown = ({ item, updateStyle, styles }) => {
       {isOpen && filteredStyles.length > 0 && (
         <div style={{
           position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 50,
-          background: 'var(--card-bg)', border: '1px solid var(--border-color)',
+          background: '#1e293b', color: '#ffffff', border: '1px solid var(--border-color)',
           borderRadius: '4px', maxHeight: '250px', overflowY: 'auto',
           boxShadow: '0 4px 12px rgba(0,0,0,0.5)', marginTop: '4px'
         }}>
@@ -112,11 +112,16 @@ const SmartStyleDropdown = ({ item, updateStyle, styles }) => {
             <div 
               key={s.id}
               onClick={() => { updateStyle(s.name); setIsOpen(false); }}
-              style={{ padding: '0.75rem', cursor: 'pointer', borderBottom: '1px solid var(--border-color)' }}
-              onMouseEnter={(e) => e.currentTarget.style.background = 'var(--bg-color)'}
+              style={{ padding: '0.75rem', cursor: 'pointer', borderBottom: '1px solid rgba(255,255,255,0.1)', display: 'flex', justifyContent: 'space-between' }}
+              onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.1)'}
               onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
             >
-              {s.name}
+              <span>{s.name}</span>
+              {s.stats !== undefined && (
+                <span style={{ color: s.stats.bal > 0 ? '#4ade80' : (s.stats.bal < 0 ? '#f87171' : '#94a3b8'), fontSize: '0.85rem' }}>
+                  Bal: {s.stats.bal}
+                </span>
+              )}
             </div>
           ))}
         </div>
@@ -155,15 +160,15 @@ const SmartBatchDropdown = ({ item, updateBatch, onViewBatch }) => {
       {isOpen && (
         <div style={{
           position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 10,
-          background: 'var(--card-bg)', border: '1px solid var(--border-color)',
+          background: '#1e293b', color: '#ffffff', border: '1px solid var(--border-color)',
           borderRadius: '4px', maxHeight: '250px', overflowY: 'auto',
           boxShadow: '0 4px 6px rgba(0,0,0,0.3)', marginTop: '4px'
         }}>
           {item.nextBatch && (
             <div
               onClick={() => { updateBatch(item.nextBatch); setIsOpen(false); }}
-              style={{ padding: '0.75rem', cursor: 'pointer', borderBottom: '1px solid var(--border-color)', display: 'flex', alignItems: 'center', gap: '0.5rem', fontWeight: 'bold', color: 'var(--primary)' }}
-              onMouseEnter={(e) => e.currentTarget.style.background = 'var(--bg-color)'}
+              style={{ padding: '0.75rem', cursor: 'pointer', borderBottom: '1px solid rgba(255,255,255,0.1)', display: 'flex', alignItems: 'center', gap: '0.5rem', fontWeight: 'bold', color: '#60a5fa' }}
+              onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.1)'}
               onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
             >
               <Plus size={16} /> NEW ({item.nextBatch})
@@ -171,14 +176,14 @@ const SmartBatchDropdown = ({ item, updateBatch, onViewBatch }) => {
           )}
           
           {item.suggestedBatches && item.suggestedBatches.length > 0 && (
-            <div style={{ padding: '0.5rem', fontSize: '0.75rem', color: 'var(--text-secondary)', background: 'rgba(0,0,0,0.2)' }}>
+            <div style={{ padding: '0.5rem', fontSize: '0.75rem', color: '#94a3b8', background: 'rgba(0,0,0,0.4)' }}>
               Suggested Old Batches
             </div>
           )}
 
           {item.suggestedBatches?.map((b, idx) => (
-            <div key={idx} style={{ display: 'flex', alignItems: 'center', borderBottom: '1px solid var(--border-color)' }}
-                 onMouseEnter={(e) => e.currentTarget.style.background = 'var(--bg-color)'}
+            <div key={idx} style={{ display: 'flex', alignItems: 'center', borderBottom: '1px solid rgba(255,255,255,0.1)' }}
+                 onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.1)'}
                  onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
             >
               <div 
@@ -186,7 +191,7 @@ const SmartBatchDropdown = ({ item, updateBatch, onViewBatch }) => {
                 onClick={() => { updateBatch(b.batch_no); setIsOpen(false); }}
               >
                 <div style={{ fontWeight: 'bold' }}>{b.batch_no}</div>
-                <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', display: 'flex', gap: '1rem' }}>
+                <div style={{ fontSize: '0.75rem', color: '#cbd5e1', display: 'flex', gap: '1rem' }}>
                   <span>Style: {b.style_name}</span>
                   {b.balance !== undefined && (
                     <span style={{ color: b.balance > 0 ? 'var(--success)' : (b.balance < 0 ? 'var(--danger)' : 'inherit') }}>
@@ -197,7 +202,7 @@ const SmartBatchDropdown = ({ item, updateBatch, onViewBatch }) => {
               </div>
               <button 
                 onClick={(e) => { e.stopPropagation(); onViewBatch(b.batch_no); setIsOpen(false); }}
-                style={{ padding: '0.5rem', background: 'none', border: 'none', color: 'var(--accent-secondary)', cursor: 'pointer', marginRight: '0.5rem' }}
+                style={{ padding: '0.5rem', background: 'none', border: 'none', color: '#94a3b8', cursor: 'pointer', marginRight: '0.5rem' }}
                 title="View Batch Ledger"
               >
                 <Info size={18} />
@@ -287,7 +292,7 @@ const Transactions = () => {
     try {
       const v = await getVendors();
       setVendors(v);
-      const s = await getStyles();
+      const s = await getStylesWithBalances();
       setStyles(s);
       const r = await getRecentTransactions(10000);
       setRecent(r);
@@ -311,9 +316,13 @@ const Transactions = () => {
         const updatedItems = [...prevItems];
         updatedItems[index].suggestedBatches = matchedBatches;
         updatedItems[index].nextBatch = nextB;
-        if (!updatedItems[index].batch_no) {
+        
+        if (matchedBatches && matchedBatches.length > 0) {
+          updatedItems[index].batch_no = matchedBatches[0].batch_no;
+        } else {
           updatedItems[index].batch_no = nextB;
         }
+        
         return updatedItems;
       });
     }
