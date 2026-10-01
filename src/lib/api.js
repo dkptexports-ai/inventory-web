@@ -354,8 +354,8 @@ export async function getCompanies() {
   
   if (!data || data.length === 0) {
     await supabase.from('companies').insert([
-      { name: 'DKPT' },
-      { name: 'Malik' },
+      { name: 'Ganaur' },
+      { name: 'Panipat' },
       { name: 'Tufting' }
     ]);
     const { data: newData } = await supabase.from('companies').select('*').order('name');
@@ -402,6 +402,23 @@ export async function saveAttendance(records) {
   });
 
   const { error } = await supabase.from('attendance').upsert(cleanedRecords, { onConflict: 'employee_id,date' });
+  if (error) throw error;
+  return true;
+}
+
+export async function deleteAttendanceByDate(date) {
+  const { error } = await supabase.from('attendance').delete().eq('date', date);
+  if (error) throw error;
+  return true;
+}
+
+export async function deleteAttendanceByMonth(month, year) {
+  const startDate = `${year}-${String(month).padStart(2, '0')}-01`;
+  const endDate = `${year}-${String(month).padStart(2, '0')}-${new Date(year, month, 0).getDate()}`;
+  const { error } = await supabase.from('attendance')
+    .delete()
+    .gte('date', startDate)
+    .lte('date', endDate);
   if (error) throw error;
   return true;
 }

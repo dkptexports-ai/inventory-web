@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { getEmployees, getAttendance, getAttendanceByDate, saveAttendance, getCompanies } from '../lib/api';
+import { getEmployees, getAttendance, getAttendanceByDate, saveAttendance, getCompanies, deleteAttendanceByDate, deleteAttendanceByMonth } from '../lib/api';
 
 const Attendance = () => {
   const [employees, setEmployees] = useState([]);
@@ -124,6 +124,23 @@ const Attendance = () => {
     }
   };
 
+  const handleDeleteGrid = async () => {
+    if (useDateRange) {
+      alert("Cannot delete by date range. Please select a specific month instead.");
+      return;
+    }
+    if (window.confirm(`Are you sure you want to delete ALL attendance records for ${month}/${year}? This action cannot be undone.`)) {
+      try {
+        await deleteAttendanceByMonth(month, year);
+        alert('Monthly attendance deleted successfully');
+        loadData();
+      } catch (err) {
+        console.error(err);
+        alert('Failed to delete monthly attendance: ' + (err.message || JSON.stringify(err)));
+      }
+    }
+  };
+
   const handleDailyChange = (empId, field, value) => {
     setDailyData(prev => ({
       ...prev,
@@ -149,6 +166,23 @@ const Attendance = () => {
     } catch (err) {
       console.error(err);
       alert('Failed to save daily entries: ' + (err.message || JSON.stringify(err)));
+    }
+  };
+
+  const handleDeleteDaily = async () => {
+    if (!isDateLoaded) {
+      alert("Please load date first before deleting.");
+      return;
+    }
+    if (window.confirm(`Are you sure you want to delete ALL attendance records for ${selectedDate}? This action cannot be undone.`)) {
+      try {
+        await deleteAttendanceByDate(selectedDate);
+        alert('Daily attendance deleted successfully');
+        loadData();
+      } catch (err) {
+        console.error(err);
+        alert('Failed to delete daily attendance: ' + (err.message || JSON.stringify(err)));
+      }
     }
   };
 
@@ -252,6 +286,39 @@ const Attendance = () => {
     return isEmployeeActiveForDate(emp, selectedDate);
   });
 
+  const companyPresentCounts = {};
+  companies.forEach(c => {
+    companyPresentCounts[c.id] = { name: c.name, count: 0 };
+  });
+  let unassignedCount = 0;
+
+  filteredEmployeesDaily.forEach(emp => {
+    const entry = dailyData[emp.id];
+    if (entry && ['present', 'half', 'double'].includes(entry.status)) {
+      if (entry.company_id && companyPresentCounts[entry.company_id]) {
+        companyPresentCounts[entry.company_id].count++;
+      } else {
+        let matched = false;
+        if (['G', 'P', 'T'].includes(entry.company_id)) {
+           const comp = companies.find(c => {
+             const name = c.name.toLowerCase();
+             if (entry.company_id === 'G') return name.includes('ganaur') || name.startsWith('g');
+             if (entry.company_id === 'P') return name.includes('panipat') || name.startsWith('p');
+             if (entry.company_id === 'T') return name.includes('tufting') || name.startsWith('t');
+             return false;
+           });
+           if (comp && companyPresentCounts[comp.id]) {
+             companyPresentCounts[comp.id].count++;
+             matched = true;
+           }
+        }
+        if (!matched) unassignedCount++;
+      }
+    }
+  });
+
+  const presentSummary = Object.values(companyPresentCounts).filter(c => c.count > 0);
+
   return (
     <div>
       <div className="page-header">
@@ -298,7 +365,8 @@ const Attendance = () => {
 
       {mode === 'grid' ? (
         <>
-          <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '1rem' }}>
+          <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '1rem', gap: '1rem' }}>
+            <button className="btn btn-danger" onClick={handleDeleteGrid}>Delete Month Data</button>
             <button className="btn btn-primary" onClick={handleSaveGrid}>Save Grid Changes</button>
           </div>
 
@@ -373,8 +441,21 @@ const Attendance = () => {
           {isDateLoaded && (
             <div className="glass-card" style={{ padding: '1rem', overflowX: 'auto' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-                <h3>Daily Entries - {selectedDate}</h3>
-                <button className="btn btn-primary" onClick={handleSaveDaily}>Save Daily Entries</button>
+                <div>
+                  <h3 style={{ margin: 0 }}>Daily Entries - {selectedDate}</h3>
+                  {(presentSummary.length > 0 || unassignedCount > 0) && (
+                    <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem', fontSize: '0.85rem', flexWrap: 'wrap' }}>
+                      {presentSummary.map(c => (
+                        <span key={c.name} className="badge badge-success" style={{ background: 'var(--success)', color: '#fff' }}>{c.name}: {c.count}</span>
+                      ))}
+                      {unassignedCount > 0 && <span className="badge badge-warning" style={{ background: 'var(--warning)', color: '#fff' }}>Unassigned: {unassignedCount}</span>}
+                    </div>
+                  )}
+                </div>
+                <div style={{ display: 'flex', gap: '1rem' }}>
+                  <button className="btn btn-danger" onClick={handleDeleteDaily}>Delete Date Data</button>
+                  <button className="btn btn-primary" onClick={handleSaveDaily}>Save Daily Entries</button>
+                </div>
               </div>
               
               <table className="table-container" style={{ width: '100%', fontSize: '0.85rem' }}>
