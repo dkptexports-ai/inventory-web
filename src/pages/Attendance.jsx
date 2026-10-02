@@ -581,7 +581,19 @@ const Attendance = () => {
             <div className="glass-card" style={{ padding: '1rem', overflowX: 'auto' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
                 <div>
-                  <h3 style={{ margin: 0 }}>Daily Entries - {selectedDate}</h3>
+                  <h3 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '1rem' }}>
+                    Daily Entries - {selectedDate}
+                    {(() => {
+                      const savedCount = filteredEmployeesDaily.filter(emp => attendanceData[`${emp.id}_${selectedDate}`]).length;
+                      if (savedCount === 0) {
+                        return <span className="badge badge-warning" style={{ fontSize: '0.75rem' }}>Auto-Filled / Unsaved</span>;
+                      } else if (savedCount < filteredEmployeesDaily.length) {
+                        return <span className="badge badge-warning" style={{ fontSize: '0.75rem' }}>Partially Saved ({savedCount}/{filteredEmployeesDaily.length})</span>;
+                      } else {
+                        return <span className="badge badge-success" style={{ fontSize: '0.75rem' }}>Saved & Up to Date</span>;
+                      }
+                    })()}
+                  </h3>
                   {(presentSummary.length > 0 || unassignedCount > 0) && (
                     <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem', fontSize: '0.85rem', flexWrap: 'wrap' }}>
                       {presentSummary.map(c => (
@@ -621,6 +633,11 @@ const Attendance = () => {
                           <td style={{ fontWeight: 600 }}>
                             {emp.name}
                             {!emp.is_active && <span className="badge badge-danger" style={{ marginLeft: '0.5rem' }}>Left</span>}
+                            {attendanceData[`${emp.id}_${selectedDate}`] ? (
+                              <span style={{ fontSize: '0.7rem', color: 'var(--success)', marginLeft: '0.5rem' }}>✓ Saved</span>
+                            ) : (
+                              <span style={{ fontSize: '0.7rem', color: 'var(--warning)', marginLeft: '0.5rem' }}>○ Unsaved</span>
+                            )}
                           </td>
                           <td>
                             <input 
