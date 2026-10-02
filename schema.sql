@@ -71,6 +71,7 @@ CREATE TABLE IF NOT EXISTS employees (
   basic_salary NUMERIC DEFAULT 0,
   ot_enabled BOOLEAN DEFAULT false,
   opening_balance NUMERIC DEFAULT 0,
+  default_company_id UUID REFERENCES companies(id),
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
@@ -190,3 +191,18 @@ CREATE POLICY "Allow public read/write on partner_ledgers" ON partner_ledgers FO
 
 DROP POLICY IF EXISTS "Allow public read/write on pnl_manual_expenses" ON pnl_manual_expenses;
 CREATE POLICY "Allow public read/write on pnl_manual_expenses" ON pnl_manual_expenses FOR ALL USING (true) WITH CHECK (true);
+
+-- Create employee sequences table
+CREATE TABLE IF NOT EXISTS employee_sequences (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  employee_id UUID REFERENCES employees(id) ON DELETE CASCADE,
+  month_year TEXT NOT NULL,
+  sequence_order INTEGER NOT NULL,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  UNIQUE(employee_id, month_year)
+);
+
+ALTER TABLE employee_sequences ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Allow public read/write on employee_sequences" ON employee_sequences;
+CREATE POLICY "Allow public read/write on employee_sequences" ON employee_sequences FOR ALL USING (true) WITH CHECK (true);

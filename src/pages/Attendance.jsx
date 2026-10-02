@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { getEmployees, getAttendance, getAttendanceByDate, saveAttendance, getCompanies, deleteAttendanceByDate, deleteAttendanceByMonth } from '../lib/api';
+import { getEmployees, getAttendance, getAttendanceByDate, saveAttendance, getCompanies, deleteAttendanceByDate, deleteAttendanceByMonth, getEmployeeSequences, saveEmployeeSequences } from '../lib/api';
 
 const Attendance = () => {
   const [employees, setEmployees] = useState([]);
@@ -20,11 +20,13 @@ const Attendance = () => {
   const [dailyData, setDailyData] = useState({});
   const [isDateLoaded, setIsDateLoaded] = useState(false);
   
+  const [editSequences, setEditSequences] = useState({});
+  
   // Calculate dynamic days array based on Date Range or Month
   const [gridDays, setGridDays] = useState([]);
 
   useEffect(() => {
-    if (mode === 'grid') {
+    if (mode === 'grid' || mode === 'sequence') {
       loadData();
     }
   }, [month, year, useDateRange, fromDate, toDate, filterCompanyId, mode]);
@@ -38,17 +40,49 @@ const Attendance = () => {
 
   const loadData = async () => {
     try {
-      const [empData, compData] = await Promise.all([
+      const targetMonth = mode === 'daily' ? new Date(selectedDate).getMonth() + 1 : month;
+      const targetYear = mode === 'daily' ? new Date(selectedDate).getFullYear() : year;
+
+      const [empDataRaw, compData, seqData] = await Promise.all([
         getEmployees(),
-        getCompanies()
+        getCompanies(),
+        getEmployeeSequences(targetMonth, targetYear)
       ]);
-      setEmployees(empData || []);
+      
+      const seqMap = {};
+      (seqData || []).forEach(s => {
+        seqMap[s.employee_id] = s.sequence_order;
+      });
+
+      const empData = [...(empDataRaw || [])].sort((a, b) => {
+        const seqA = seqMap[a.id] !== undefined ? seqMap[a.id] : 999999;
+        const seqB = seqMap[b.id] !== undefined ? seqMap[b.id] : 999999;
+        if (seqA !== seqB) return seqA - seqB;
+        return a.name.localeCompare(b.name);
+      });
+      
+      setEmployees(empData);
+      
+      // Initialize editSequences with 1-based index or existing seqMap
+      const initSeq = {};
+      empData.forEach((emp, idx) => {
+        initSeq[emp.id] = seqMap[emp.id] !== undefined ? seqMap[emp.id] : idx + 1;
+      });
+      setEditSequences(initSeq);
+      
       setCompanies(compData || []);
       
       let attData = [];
       let calculatedDays = [];
       
-      if (useDateRange && fromDate && toDate) {
+      if (mode === 'daily') {
+        // Fetch up to 30 days prior to selectedDate to accurately infer the recent status
+        const selDateObj = new Date(selectedDate);
+        const pastDateObj = new Date(selectedDate);
+        pastDateObj.setDate(pastDateObj.getDate() - 30);
+        const fromStr = pastDateObj.toISOString().split('T')[0];
+        attData = await getAttendanceByDate(fromStr, selectedDate);
+      } else if (useDateRange && fromDate && toDate) {
         attData = await getAttendanceByDate(fromDate, toDate);
         
         let curr = new Date(fromDate);
@@ -73,13 +107,31 @@ const Attendance = () => {
       
       const attMap = {};
       const dailyMap = {};
-      (attData || []).forEach(record => {
+      const recentCompanyMap = {};
+      const recentStatusMap = {};
+
+      const sortedAtt = [...(attData || [])].sort((a, b) => new Date(a.date) - new Date(b.date));
+
+      sortedAtt.forEach(record => {
         attMap[`${record.employee_id}_${record.date}`] = record;
         
         if (record.date === selectedDate) {
           dailyMap[record.employee_id] = record;
         }
+
+        if (record.date <= selectedDate) {
+          if (record.company_id) recentCompanyMap[record.employee_id] = record.company_id;
+          if (record.status) recentStatusMap[record.employee_id] = record.status;
+        }
       });
+
+      const updatedEmpData = empData.map(emp => ({
+        ...emp,
+        inferred_company_id: recentCompanyMap[emp.id] || emp.default_company_id,
+        inferred_status: recentStatusMap[emp.id] || ''
+      }));
+
+      setEmployees(updatedEmpData);
       setAttendanceData(attMap);
       setDailyData(dailyMap);
     } catch (err) {
@@ -142,15 +194,27 @@ const Attendance = () => {
   };
 
   const handleDailyChange = (empId, field, value) => {
-    setDailyData(prev => ({
-      ...prev,
-      [empId]: {
-        ...prev[empId],
-        employee_id: empId,
-        date: selectedDate,
-        [field]: value
-      }
-    }));
+    setDailyData(prev => {
+      const existing = prev[empId] || {};
+      const emp = employees.find(e => e.id === empId) || {};
+      const defaultCompany = emp.inferred_company_id || emp.default_company_id || '';
+      const defaultStatus = emp.inferred_status || '';
+
+      return {
+        ...prev,
+        [empId]: {
+          status: defaultStatus,
+          production_target: '',
+          production_qty: '',
+          overtime_hours: '',
+          company_id: defaultCompany,
+          ...existing,
+          employee_id: empId,
+          date: selectedDate,
+          [field]: value
+        }
+      };
+    });
   };
 
   const handleSaveDaily = async () => {
@@ -158,7 +222,23 @@ const Attendance = () => {
       alert("Please load date first before saving.");
       return;
     }
-    const records = Object.values(dailyData).filter(record => record.status);
+    
+    const records = filteredEmployeesDaily.map(emp => {
+      const entry = dailyData[emp.id] || { 
+        status: emp.inferred_status || '', 
+        company_id: emp.inferred_company_id || emp.default_company_id || '', 
+        production_target: '', 
+        production_qty: '', 
+        overtime_hours: '' 
+      };
+      
+      return {
+        ...entry,
+        employee_id: emp.id,
+        date: selectedDate
+      };
+    }).filter(record => record.status);
+
     try {
       await saveAttendance(records);
       alert('Daily Attendance saved successfully');
@@ -273,6 +353,28 @@ const Attendance = () => {
     return false;
   };
 
+  const handleSequenceChange = (empId, newSeqValue) => {
+    setEditSequences(prev => ({
+      ...prev,
+      [empId]: newSeqValue
+    }));
+  };
+
+  const handleSaveSequence = async () => {
+    const sequences = employees.map(emp => ({
+      employee_id: emp.id,
+      sequence_order: parseInt(editSequences[emp.id] || 999999, 10)
+    }));
+    try {
+      await saveEmployeeSequences(month, year, sequences);
+      alert('Employee sequence saved successfully for this month!');
+      loadData(); // Reload to apply sorting
+    } catch (err) {
+      console.error(err);
+      alert('Failed to save sequence: ' + (err.message || JSON.stringify(err)));
+    }
+  };
+
   const filteredEmployeesGrid = employees.filter(emp => {
     if (filterCompanyId) {
       return Object.values(attendanceData).some(a => a.employee_id === emp.id && a.company_id === filterCompanyId);
@@ -359,6 +461,7 @@ const Attendance = () => {
           <div style={{ display: 'flex', gap: '0.5rem', marginTop: '1.2rem' }}>
             <button className={`btn ${mode === 'grid' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setMode('grid')}>Monthly Grid</button>
             <button className={`btn ${mode === 'daily' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setMode('daily')}>Daily Detailed Entry</button>
+            <button className={`btn ${mode === 'sequence' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setMode('sequence')}>Set Employee Sequence</button>
           </div>
         </div>
       </div>
@@ -422,6 +525,42 @@ const Attendance = () => {
             </div>
           </div>
         </>
+      ) : mode === 'sequence' ? (
+        <>
+          <div className="glass-card" style={{ marginBottom: '2rem' }}>
+            <h3>Set Employee Sequence for {month}/{year}</h3>
+            <p style={{ color: 'var(--text-light)', marginBottom: '1rem' }}>Type the sequence number against each employee. The list won't jump around while you type. Click Save when you're done.</p>
+            <button className="btn btn-primary" onClick={handleSaveSequence} style={{ marginBottom: '1rem' }}>Save Sequence</button>
+            
+            <div className="table-container">
+              <table style={{ width: '100%' }}>
+                <thead>
+                  <tr>
+                    <th style={{ width: '100px', textAlign: 'center' }}>Sequence</th>
+                    <th>Employee Name</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {employees.map((emp) => (
+                    <tr key={emp.id}>
+                      <td style={{ textAlign: 'center' }}>
+                        <input
+                          type="number"
+                          className="input-field"
+                          style={{ width: '60px', textAlign: 'center' }}
+                          value={editSequences[emp.id] ?? ''}
+                          onChange={(e) => handleSequenceChange(emp.id, e.target.value)}
+                          onFocus={(e) => e.target.select()}
+                        />
+                      </td>
+                      <td style={{ fontWeight: 600 }}>{emp.name}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </>
       ) : (
         <>
           <div className="glass-card" style={{ marginBottom: '2rem' }}>
@@ -476,7 +615,7 @@ const Attendance = () => {
                     </tr>
                   ) : (
                     filteredEmployeesDaily.map((emp, index) => {
-                      const entry = dailyData[emp.id] || { status: '', company_id: '', production_target: '', production_qty: '', overtime_hours: '' };
+                      const entry = dailyData[emp.id] || { status: emp.inferred_status || '', company_id: emp.inferred_company_id || emp.default_company_id || '', production_target: '', production_qty: '', overtime_hours: '' };
                       return (
                         <tr key={emp.id}>
                           <td style={{ fontWeight: 600 }}>
@@ -507,9 +646,9 @@ const Attendance = () => {
                               data-rowindex={index}
                             />
                           </td>
-                          <td><input type="number" className="input-field" style={{ width: '90px', padding: '0.25rem' }} placeholder="Target" value={entry.production_target ?? ''} onChange={(e) => handleDailyChange(emp.id, 'production_target', Number(e.target.value))} onKeyDown={(e) => handleKeyDown(e, 'production_target', index)} data-col="production_target" data-rowindex={index} /></td>
-                          <td><input type="number" className="input-field" style={{ width: '80px', padding: '0.25rem' }} placeholder="Qty" value={entry.production_qty || ''} onChange={(e) => handleDailyChange(emp.id, 'production_qty', Number(e.target.value))} onKeyDown={(e) => handleKeyDown(e, 'production_qty', index)} data-col="production_qty" data-rowindex={index} /></td>
-                          <td><input type="number" className="input-field" style={{ width: '80px', padding: '0.25rem' }} placeholder="OT Hrs" value={entry.overtime_hours || ''} onChange={(e) => handleDailyChange(emp.id, 'overtime_hours', Number(e.target.value))} onKeyDown={(e) => handleKeyDown(e, 'overtime_hours', index)} data-col="overtime_hours" data-rowindex={index} /></td>
+                          <td><input type="number" className="input-field" style={{ width: '90px', padding: '0.25rem' }} placeholder="Target" value={entry.production_target ?? ''} onChange={(e) => handleDailyChange(emp.id, 'production_target', e.target.value === '' ? '' : Number(e.target.value))} onKeyDown={(e) => handleKeyDown(e, 'production_target', index)} data-col="production_target" data-rowindex={index} /></td>
+                          <td><input type="number" className="input-field" style={{ width: '80px', padding: '0.25rem' }} placeholder="Qty" value={entry.production_qty ?? ''} onChange={(e) => handleDailyChange(emp.id, 'production_qty', e.target.value === '' ? '' : Number(e.target.value))} onKeyDown={(e) => handleKeyDown(e, 'production_qty', index)} data-col="production_qty" data-rowindex={index} /></td>
+                          <td><input type="number" className="input-field" style={{ width: '80px', padding: '0.25rem' }} placeholder="OT Hrs" value={entry.overtime_hours ?? ''} onChange={(e) => handleDailyChange(emp.id, 'overtime_hours', e.target.value === '' ? '' : Number(e.target.value))} onKeyDown={(e) => handleKeyDown(e, 'overtime_hours', index)} data-col="overtime_hours" data-rowindex={index} /></td>
                         </tr>
                       );
                     })

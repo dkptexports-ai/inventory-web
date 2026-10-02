@@ -398,11 +398,22 @@ export async function saveAttendance(records) {
     if (copy.company_id === "") {
       copy.company_id = null;
     }
+    if (copy.production_target === "") copy.production_target = null;
+    if (copy.production_qty === "") copy.production_qty = null;
+    if (copy.overtime_hours === "") copy.overtime_hours = null;
     return copy;
   });
 
   const { error } = await supabase.from('attendance').upsert(cleanedRecords, { onConflict: 'employee_id,date' });
   if (error) throw error;
+
+  // Update default_company_id for employees to auto-fill next time
+  for (const r of cleanedRecords) {
+    if (r.company_id) {
+      await supabase.from('employees').update({ default_company_id: r.company_id }).eq('id', r.employee_id);
+    }
+  }
+
   return true;
 }
 
@@ -529,4 +540,27 @@ export async function updatePnlManualExpense(head_name, amount) {
   return true;
 }
 
+// Employee Sequences
+export async function getEmployeeSequences(month, year) {
+  const month_year = `${year}-${String(month).padStart(2, '0')}`;
+  const { data, error } = await supabase.from('employee_sequences')
+    .select('*')
+    .eq('month_year', month_year);
+  if (error) throw error;
+  return data;
+}
+
+export async function saveEmployeeSequences(month, year, sequences) {
+  const month_year = `${year}-${String(month).padStart(2, '0')}`;
+  const payload = sequences.map(s => ({
+    employee_id: s.employee_id,
+    month_year,
+    sequence_order: s.sequence_order
+  }));
+
+  const { error } = await supabase.from('employee_sequences')
+    .upsert(payload, { onConflict: 'employee_id,month_year' });
+  if (error) throw error;
+  return true;
+}
 
