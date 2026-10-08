@@ -471,6 +471,14 @@ export async function getUniquePartners() {
   return uniqueNames.sort();
 }
 
+export async function getUniqueDescriptions() {
+  const { data, error } = await supabase.from('partner_ledgers').select('description');
+  if (error) throw error;
+  
+  const uniqueDescs = [...new Set(data.map(item => item.description).filter(Boolean))];
+  return uniqueDescs.sort();
+}
+
 export async function addPartnerLedgerEntry(payload) {
   const dataToInsert = Array.isArray(payload) ? payload : [payload];
   const { error } = await supabase.from('partner_ledgers').insert(dataToInsert);

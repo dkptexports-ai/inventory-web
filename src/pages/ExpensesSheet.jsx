@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { getPartnerLedger, addPartnerLedgerEntry, deletePartnerLedgerEntry, getUniquePartners, updatePartnerLedgerEntry } from '../lib/api';
+import { getPartnerLedger, addPartnerLedgerEntry, deletePartnerLedgerEntry, getUniquePartners, updatePartnerLedgerEntry, getUniqueDescriptions } from '../lib/api';
 import { Plus, Trash2, Save, IndianRupee, Search, Edit2, X } from 'lucide-react';
 
 // Custom Smart Dropdown Component
 const ExpensesSheet = () => {
   const [uniquePartners, setUniquePartners] = useState([]);
+  const [uniqueDescriptions, setUniqueDescriptions] = useState([]);
   const [filterPerson, setFilterPerson] = useState('');
   const [entries, setEntries] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -28,10 +29,14 @@ const ExpensesSheet = () => {
 
   const fetchPartners = async () => {
     try {
-      const partners = await getUniquePartners();
+      const [partners, descriptions] = await Promise.all([
+        getUniquePartners(),
+        getUniqueDescriptions()
+      ]);
       setUniquePartners(partners);
+      setUniqueDescriptions(descriptions);
     } catch (err) {
-      console.error('Failed to load partners', err);
+      console.error('Failed to load partners or descriptions', err);
     }
   };
 
@@ -264,6 +269,7 @@ const ExpensesSheet = () => {
                 <input 
                   type="text" 
                   className="input-field" 
+                  list="description-list"
                   placeholder="Details..." 
                   value={row.description}
                   onChange={(e) => handleRowChange(row.id, 'description', e.target.value)}
@@ -314,6 +320,10 @@ const ExpensesSheet = () => {
               <Save size={18} /> Submit All Entries
             </button>
           </div>
+          
+          <datalist id="description-list">
+            {uniqueDescriptions.map((desc, idx) => <option key={idx} value={desc} />)}
+          </datalist>
         </form>
       </div>
 
@@ -398,7 +408,7 @@ const ExpensesSheet = () => {
                             <input type="text" className="input-field" style={{marginBottom: 0, padding: '0.4rem', width: '120px'}} value={editFormData.partner_name} onChange={(e) => handleEditChange('partner_name', e.target.value)} list="filter-person-list" required />
                           </td>
                           <td>
-                            <input type="text" className="input-field" style={{marginBottom: 0, padding: '0.4rem', width: '100%'}} value={editFormData.description} onChange={(e) => handleEditChange('description', e.target.value)} required />
+                            <input type="text" className="input-field" style={{marginBottom: 0, padding: '0.4rem', width: '100%'}} list="description-list" value={editFormData.description} onChange={(e) => handleEditChange('description', e.target.value)} required />
                           </td>
                           <td>
                             <input type="number" className="input-field" style={{marginBottom: 0, padding: '0.4rem', width: '80px', textAlign: 'right'}} value={editFormData.expense} onChange={(e) => handleEditChange('expense', e.target.value)} min="0" step="0.01" />
