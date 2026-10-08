@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { getEmployees, getAttendance, getAttendanceByDate, getCompanies, saveSalaryPayment } from '../lib/api';
 
 const Salary = () => {
@@ -25,6 +25,22 @@ const Salary = () => {
     bank: '',
     companyId: ''
   });
+
+  const [isManualMode, setIsManualMode] = useState(false);
+  const [manualSalaries, setManualSalaries] = useState([]);
+  const [showManualPopup, setShowManualPopup] = useState(false);
+  const [manualForm, setManualForm] = useState({
+    employee: null,
+    search: '',
+    isOpen: false,
+    workingDays: '',
+    holidays: '',
+    fine: '',
+    incentive: '',
+    previousBalance: '',
+    advance: ''
+  });
+  const searchInputRef = useRef(null);
 
   useEffect(() => {
     loadBaseData();
@@ -221,65 +237,78 @@ const Salary = () => {
             <button className={`btn ${viewMode === 'master' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setViewMode('master')}>Master Sheet</button>
             <button className={`btn ${viewMode === 'single' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setViewMode('single')}>Single View</button>
             <button className="btn btn-secondary" onClick={() => window.print()}>Print / Save PDF</button>
+            <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontWeight: 'bold', marginLeft: '1rem', color: 'var(--accent-primary)' }}>
+              <input type="checkbox" checked={isManualMode} onChange={e => setIsManualMode(e.target.checked)} style={{ transform: 'scale(1.2)' }} />
+              Manual Mode
+            </label>
+            {isManualMode && (
+              <button className="btn btn-primary" onClick={() => {
+                setManualSalaries([]); // Clear previous entries when starting fresh bulk? Or let them append. Let's let them append, or they can clear it. Actually, I won't clear it.
+                setShowManualPopup(true);
+                setTimeout(() => searchInputRef.current?.focus(), 100);
+              }}>+ Bulk Manual Entry</button>
+            )}
           </div>
         </div>
       </div>
 
       {viewMode === 'master' ? (
         <div className="glass-card" style={{ padding: '1rem', overflowX: 'auto' }}>
-          <h3 style={{ marginBottom: '1rem' }}>Consolidated Salary Sheet - {month}/{year}</h3>
+          <h3 style={{ marginBottom: '1rem' }}>
+            {isManualMode ? 'Manual Salary Sheet' : `Consolidated Salary Sheet - ${month}/${year}`}
+          </h3>
           <table className="table-container" style={{ width: '100%', fontSize: '0.85rem' }}>
             <thead>
               <tr>
                 <th>Employee</th>
                 <th>Working Days</th>
                 <th>Holidays/Offs</th>
-                <th>Fines</th>
-                <th>OT Hrs</th>
-                <th>OT (₹)</th>
+                <th>Fines (₹)</th>
+                {!isManualMode && <th>OT Hrs</th>}
+                {!isManualMode && <th>OT (₹)</th>}
                 <th>Incentive (₹)</th>
-                <th>Full Duty (₹)</th>
+                {!isManualMode && <th>Full Duty (₹)</th>}
                 <th>Prev Bal (₹)</th>
                 <th>Advance (₹)</th>
                 <th>Net Payable (₹)</th>
               </tr>
             </thead>
             <tbody>
-              {allSalaries.map(sal => (
+              {(isManualMode ? manualSalaries : allSalaries).map(sal => (
                 <tr key={sal.employeeId}>
                   <td style={{ fontWeight: 600 }}>{sal.name}</td>
                   <td>{sal.calculatedDays}</td>
                   <td>{sal.weeklyOffs}</td>
-                  <td>{sal.fineCount}</td>
-                  <td>{sal.totalOT}</td>
-                  <td>{sal.totalOTEarned.toFixed(0)}</td>
+                  <td>{isManualMode ? sal.fineAmount : sal.fineCount}</td>
+                  {!isManualMode && <td>{sal.totalOT}</td>}
+                  {!isManualMode && <td>{sal.totalOTEarned.toFixed(0)}</td>}
                   <td>{sal.totalIncentive.toFixed(0)}</td>
-                  <td>{sal.fullDutyAmount.toFixed(0)}</td>
+                  {!isManualMode && <td>{sal.fullDutyAmount.toFixed(0)}</td>}
                   <td>{sal.previousBalance.toFixed(0)}</td>
                   <td>{sal.advance.toFixed(0)}</td>
                   <td style={{ fontWeight: 'bold', color: 'var(--success)' }}>{sal.netSalary.toFixed(0)}</td>
                 </tr>
               ))}
-              {allSalaries.length === 0 && (
+              {(isManualMode ? manualSalaries : allSalaries).length === 0 && (
                 <tr>
-                  <td colSpan="11" style={{ textAlign: 'center' }}>No records found.</td>
+                  <td colSpan={isManualMode ? "8" : "11"} style={{ textAlign: 'center' }}>No records found.</td>
                 </tr>
               )}
             </tbody>
-            {allSalaries.length > 0 && (
+            {(isManualMode ? manualSalaries : allSalaries).length > 0 && (
               <tfoot style={{ background: 'var(--bg-main)', fontWeight: 'bold' }}>
                 <tr>
                   <td>Total</td>
-                  <td>{allSalaries.reduce((sum, s) => sum + s.calculatedDays, 0)}</td>
-                  <td>{allSalaries.reduce((sum, s) => sum + s.weeklyOffs, 0)}</td>
-                  <td>{allSalaries.reduce((sum, s) => sum + s.fineCount, 0)}</td>
-                  <td>{allSalaries.reduce((sum, s) => sum + s.totalOT, 0)}</td>
-                  <td>{allSalaries.reduce((sum, s) => sum + s.totalOTEarned, 0).toFixed(0)}</td>
-                  <td>{allSalaries.reduce((sum, s) => sum + s.totalIncentive, 0).toFixed(0)}</td>
-                  <td>{allSalaries.reduce((sum, s) => sum + s.fullDutyAmount, 0).toFixed(0)}</td>
-                  <td>{allSalaries.reduce((sum, s) => sum + s.previousBalance, 0).toFixed(0)}</td>
-                  <td>{allSalaries.reduce((sum, s) => sum + s.advance, 0).toFixed(0)}</td>
-                  <td style={{ color: 'var(--success)' }}>{allSalaries.reduce((sum, s) => sum + s.netSalary, 0).toFixed(0)}</td>
+                  <td>{(isManualMode ? manualSalaries : allSalaries).reduce((sum, s) => sum + s.calculatedDays, 0)}</td>
+                  <td>{(isManualMode ? manualSalaries : allSalaries).reduce((sum, s) => sum + s.weeklyOffs, 0)}</td>
+                  <td>{(isManualMode ? manualSalaries : allSalaries).reduce((sum, s) => sum + (isManualMode ? s.fineAmount : s.fineCount), 0)}</td>
+                  {!isManualMode && <td>{allSalaries.reduce((sum, s) => sum + s.totalOT, 0)}</td>}
+                  {!isManualMode && <td>{allSalaries.reduce((sum, s) => sum + s.totalOTEarned, 0).toFixed(0)}</td>}
+                  <td>{(isManualMode ? manualSalaries : allSalaries).reduce((sum, s) => sum + s.totalIncentive, 0).toFixed(0)}</td>
+                  {!isManualMode && <td>{allSalaries.reduce((sum, s) => sum + s.fullDutyAmount, 0).toFixed(0)}</td>}
+                  <td>{(isManualMode ? manualSalaries : allSalaries).reduce((sum, s) => sum + s.previousBalance, 0).toFixed(0)}</td>
+                  <td>{(isManualMode ? manualSalaries : allSalaries).reduce((sum, s) => sum + s.advance, 0).toFixed(0)}</td>
+                  <td style={{ color: 'var(--success)' }}>{(isManualMode ? manualSalaries : allSalaries).reduce((sum, s) => sum + s.netSalary, 0).toFixed(0)}</td>
                 </tr>
               </tfoot>
             )}
@@ -376,6 +405,158 @@ const Salary = () => {
         </div>
       )}
       </>
+      )}
+
+      {showManualPopup && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 200 }}>
+          <div className="glass-card" style={{ width: '600px', background: 'var(--bg-main)', padding: '2rem', maxHeight: '90vh', overflowY: 'auto' }}>
+            <h3 style={{ marginBottom: '1.5rem', color: 'var(--accent-primary)' }}>Bulk Manual Salary Entry</h3>
+            
+            <div style={{ marginBottom: '1rem', color: 'var(--text-light)', fontSize: '0.9rem' }}>
+              Added in this session: <strong style={{ color: 'var(--success)' }}>{manualSalaries.length} employees</strong>
+            </div>
+
+            <div className="input-group" style={{ position: 'relative' }}>
+              <label className="input-label">Employee Name</label>
+              <input 
+                type="text" 
+                ref={searchInputRef}
+                className="input-field" 
+                placeholder="Type to search..." 
+                value={manualForm.search}
+                onChange={e => setManualForm({ ...manualForm, search: e.target.value, isOpen: true })}
+                onFocus={() => setManualForm({ ...manualForm, isOpen: true })}
+                onKeyDown={e => {
+                  if (e.key === 'Enter') {
+                    // Auto-select first if open
+                    const filtered = employees.filter(emp => emp.name.toLowerCase().includes(manualForm.search.toLowerCase()));
+                    if (manualForm.isOpen && filtered.length > 0) {
+                      setManualForm({ 
+                        ...manualForm, 
+                        employee: filtered[0], 
+                        search: filtered[0].name, 
+                        isOpen: false,
+                        previousBalance: filtered[0].opening_balance || ''
+                      });
+                    }
+                  }
+                }}
+              />
+              {manualForm.isOpen && (
+                <ul style={{ 
+                  position: 'absolute', top: '100%', left: 0, right: 0, 
+                  background: '#1a1a1a', color: '#fff', 
+                  maxHeight: '150px', overflowY: 'auto', zIndex: 10,
+                  listStyle: 'none', padding: 0, margin: 0, borderRadius: '4px', border: '1px solid #333'
+                }}>
+                  {employees.filter(e => e.name.toLowerCase().includes(manualForm.search.toLowerCase())).map(emp => (
+                    <li 
+                      key={emp.id} 
+                      style={{ padding: '0.8rem', cursor: 'pointer', borderBottom: '1px solid #333' }}
+                      onClick={() => {
+                        setManualForm({ 
+                          ...manualForm, 
+                          employee: emp, 
+                          search: emp.name, 
+                          isOpen: false,
+                          previousBalance: emp.opening_balance || ''
+                        });
+                      }}
+                    >
+                      {emp.name} ({emp.salary_type})
+                    </li>
+                  ))}
+                  {employees.filter(e => e.name.toLowerCase().includes(manualForm.search.toLowerCase())).length === 0 && (
+                    <li style={{ padding: '0.8rem', color: '#888' }}>No employees found</li>
+                  )}
+                </ul>
+              )}
+            </div>
+
+            {(() => {
+              const handleInputEnter = (e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  if (!manualForm.employee) return;
+                  
+                  const emp = manualForm.employee;
+                  const perDay = (emp.basic_salary || 0) / 30;
+                  const days = Number(manualForm.workingDays) || 0;
+                  const hols = Number(manualForm.holidays) || 0;
+                  const f = Number(manualForm.fine) || 0;
+                  const inc = Number(manualForm.incentive) || 0;
+                  const prev = Number(manualForm.previousBalance) || 0;
+                  const adv = Number(manualForm.advance) || 0;
+
+                  const basicEarned = perDay * days;
+                  const net = basicEarned + inc - f + prev - adv;
+
+                  setManualSalaries(prevSal => [...prevSal, {
+                    employeeId: emp.id,
+                    name: emp.name,
+                    calculatedDays: days,
+                    weeklyOffs: hols,
+                    fineAmount: f,
+                    totalIncentive: inc,
+                    previousBalance: prev,
+                    advance: adv,
+                    totalBasicEarned: basicEarned,
+                    netSalary: net,
+                    fineCount: 0, totalOT: 0, totalOTEarned: 0, fullDutyAmount: 0
+                  }]);
+                  
+                  setManualForm({
+                    employee: null, search: '', isOpen: false, workingDays: '', holidays: '', fine: '', incentive: '', previousBalance: '', advance: ''
+                  });
+                  
+                  setTimeout(() => {
+                    searchInputRef.current?.focus();
+                  }, 100);
+                }
+              };
+
+              return (
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+                  <div className="input-group">
+                    <label className="input-label">Working Days</label>
+                    <input type="number" className="input-field" value={manualForm.workingDays} onChange={e => setManualForm({...manualForm, workingDays: e.target.value})} onKeyDown={handleInputEnter} />
+                  </div>
+                  <div className="input-group">
+                    <label className="input-label">Holidays</label>
+                    <input type="number" className="input-field" value={manualForm.holidays} onChange={e => setManualForm({...manualForm, holidays: e.target.value})} onKeyDown={handleInputEnter} />
+                  </div>
+                  <div className="input-group">
+                    <label className="input-label">Fine (₹)</label>
+                    <input type="number" className="input-field" value={manualForm.fine} onChange={e => setManualForm({...manualForm, fine: e.target.value})} onKeyDown={handleInputEnter} />
+                  </div>
+                  <div className="input-group">
+                    <label className="input-label">Incentive (₹)</label>
+                    <input type="number" className="input-field" value={manualForm.incentive} onChange={e => setManualForm({...manualForm, incentive: e.target.value})} onKeyDown={handleInputEnter} />
+                  </div>
+                  <div className="input-group">
+                    <label className="input-label">Previous Balance (₹)</label>
+                    <input type="number" className="input-field" value={manualForm.previousBalance} onChange={e => setManualForm({...manualForm, previousBalance: e.target.value})} onKeyDown={handleInputEnter} />
+                  </div>
+                  <div className="input-group">
+                    <label className="input-label">Advance (₹)</label>
+                    <input type="number" className="input-field" value={manualForm.advance} onChange={e => setManualForm({...manualForm, advance: e.target.value})} onKeyDown={handleInputEnter} />
+                  </div>
+                </div>
+              );
+            })()}
+
+            <div style={{ display: 'flex', gap: '1rem', marginTop: '2rem' }}>
+              <button className="btn btn-secondary" style={{ flex: 1 }} onClick={() => {
+                setManualForm({
+                  employee: null, search: '', isOpen: false, workingDays: '', holidays: '', fine: '', incentive: '', previousBalance: '', advance: ''
+                });
+                setManualSalaries([]);
+                setShowManualPopup(false);
+              }}>Cancel (Clear All)</button>
+              <button className="btn btn-primary" style={{ flex: 1 }} onClick={() => setShowManualPopup(false)}>Save & Finish</button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

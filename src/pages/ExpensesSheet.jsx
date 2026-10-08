@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { getPartnerLedger, addPartnerLedgerEntry, deletePartnerLedgerEntry, getUniquePartners } from '../lib/api';
-import { Plus, Trash2, Save, IndianRupee, Search } from 'lucide-react';
+import { getPartnerLedger, addPartnerLedgerEntry, deletePartnerLedgerEntry, getUniquePartners, updatePartnerLedgerEntry } from '../lib/api';
+import { Plus, Trash2, Save, IndianRupee, Search, Edit2, X } from 'lucide-react';
 
 // Custom Smart Dropdown Component
 const ExpensesSheet = () => {
@@ -9,6 +9,9 @@ const ExpensesSheet = () => {
   const [entries, setEntries] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  
+  const [editingId, setEditingId] = useState(null);
+  const [editFormData, setEditFormData] = useState({});
 
   // Multi-entry form state
   const [rows, setRows] = useState([
@@ -20,11 +23,7 @@ const ExpensesSheet = () => {
   }, []);
 
   useEffect(() => {
-    if (filterPerson) {
-      loadLedger(filterPerson);
-    } else {
-      setEntries([]);
-    }
+    loadLedger(filterPerson);
   }, [filterPerson]);
 
   const fetchPartners = async () => {
@@ -53,7 +52,7 @@ const ExpensesSheet = () => {
         };
       });
       
-      setEntries(dataWithBalance);
+      setEntries(dataWithBalance.reverse());
     } catch (err) {
       console.error(err);
       setError('Failed to load ledger data');
@@ -123,8 +122,7 @@ const ExpensesSheet = () => {
         date: r.date,
         description: r.description.trim(),
         expense: Number(r.expense) || 0,
-        receipt: Number(r.receipt) || 0,
-        balance: 0
+        receipt: Number(r.receipt) || 0
       }));
       
       await addPartnerLedgerEntry(payloads);
@@ -142,7 +140,7 @@ const ExpensesSheet = () => {
       
     } catch (err) {
       console.error(err);
-      setError('Failed to add entries');
+      setError('Failed to add entries: ' + (err.message || JSON.stringify(err)));
     } finally {
       setLoading(false);
     }
@@ -154,14 +152,57 @@ const ExpensesSheet = () => {
     try {
       setLoading(true);
       await deletePartnerLedgerEntry(id);
-      if (filterPerson) {
-        await loadLedger(filterPerson);
-      }
+      await loadLedger(filterPerson);
     } catch (err) {
       console.error(err);
       setError('Failed to delete entry');
       setLoading(false);
     }
+  };
+
+  const handleEditClick = (entry) => {
+    setEditingId(entry.id);
+    setEditFormData({
+      date: entry.date,
+      partner_name: entry.partner_name || '',
+      description: entry.description || '',
+      expense: entry.expense || '',
+      receipt: entry.receipt || ''
+    });
+  };
+
+  const handleEditChange = (field, value) => {
+    setEditFormData({ ...editFormData, [field]: value });
+  };
+
+  const handleSaveEdit = async () => {
+    if (!editFormData.partner_name.trim() || !editFormData.date || !editFormData.description.trim()) {
+      setError('Date, Person, and Description are required');
+      return;
+    }
+    
+    try {
+      setLoading(true);
+      await updatePartnerLedgerEntry(editingId, {
+        date: editFormData.date,
+        partner_name: editFormData.partner_name.trim(),
+        description: editFormData.description.trim(),
+        expense: Number(editFormData.expense) || 0,
+        receipt: Number(editFormData.receipt) || 0
+      });
+      setEditingId(null);
+      await loadLedger(filterPerson);
+      await fetchPartners();
+    } catch (err) {
+      console.error(err);
+      setError('Failed to update entry');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleCancelEdit = () => {
+    setEditingId(null);
   };
 
   const totalExpense = entries.reduce((sum, item) => sum + (Number(item.expense) || 0), 0);
@@ -298,12 +339,7 @@ const ExpensesSheet = () => {
           </div>
         </div>
 
-        {!filterPerson ? (
-          <div style={{ textAlign: 'center', padding: '3rem', color: 'var(--text-secondary)' }}>
-            <Search size={48} style={{ opacity: 0.2, marginBottom: '1rem' }} />
-            <p>Select a person from the dropdown above to view their ledger.</p>
-          </div>
-        ) : (
+        <div>
           <>
             {/* Summary Cards */}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1.5rem', marginBottom: '1.5rem' }}>
@@ -332,6 +368,7 @@ const ExpensesSheet = () => {
                 <thead>
                   <tr>
                     <th>Date</th>
+                    <th>Person</th>
                     <th>Description</th>
                     <th style={{ textAlign: 'right' }}>Expense (Dr)</th>
                     <th style={{ textAlign: 'right' }}>Receipt (Cr)</th>
@@ -343,7 +380,7 @@ const ExpensesSheet = () => {
                   {loading && entries.length === 0 ? (
                     <tr><td colSpan="6" style={{ textAlign: 'center', padding: '2rem' }}>Loading data...</td></tr>
                   ) : entries.length === 0 ? (
-                    <tr><td colSpan="6" style={{ textAlign: 'center', padding: '2rem' }}>No entries found for {filterPerson}</td></tr>
+                    <tr><td colSpan="7" style={{ textAlign: 'center', padding: '2rem' }}>No entries found</td></tr>
                   ) : (
                     entries.map(entry => {
                       const d = new Date(entry.date);
@@ -352,23 +389,60 @@ const ExpensesSheet = () => {
                       const rec = Number(entry.receipt) || 0;
                       const bal = entry.calculatedBalance;
                       
-                      return (
+                      return editingId === entry.id ? (
                         <tr key={entry.id}>
-                          <td>{formattedDate}</td>
-                          <td>{entry.description}</td>
-                          <td style={{ textAlign: 'right', color: exp > 0 ? 'var(--danger)' : 'inherit' }}>
-                            {exp > 0 ? exp.toFixed(2) : '-'}
+                          <td>
+                            <input type="date" className="input-field" style={{marginBottom: 0, padding: '0.4rem'}} value={editFormData.date} onChange={(e) => handleEditChange('date', e.target.value)} required />
                           </td>
-                          <td style={{ textAlign: 'right', color: rec > 0 ? 'var(--success)' : 'inherit' }}>
-                            {rec > 0 ? rec.toFixed(2) : '-'}
+                          <td>
+                            <input type="text" className="input-field" style={{marginBottom: 0, padding: '0.4rem', width: '120px'}} value={editFormData.partner_name} onChange={(e) => handleEditChange('partner_name', e.target.value)} list="filter-person-list" required />
+                          </td>
+                          <td>
+                            <input type="text" className="input-field" style={{marginBottom: 0, padding: '0.4rem', width: '100%'}} value={editFormData.description} onChange={(e) => handleEditChange('description', e.target.value)} required />
+                          </td>
+                          <td>
+                            <input type="number" className="input-field" style={{marginBottom: 0, padding: '0.4rem', width: '80px', textAlign: 'right'}} value={editFormData.expense} onChange={(e) => handleEditChange('expense', e.target.value)} min="0" step="0.01" />
+                          </td>
+                          <td>
+                            <input type="number" className="input-field" style={{marginBottom: 0, padding: '0.4rem', width: '80px', textAlign: 'right'}} value={editFormData.receipt} onChange={(e) => handleEditChange('receipt', e.target.value)} min="0" step="0.01" />
                           </td>
                           <td style={{ textAlign: 'right', fontWeight: 'bold', color: bal >= 0 ? 'var(--success)' : 'var(--danger)' }}>
                             {Math.abs(bal).toFixed(2)} {bal >= 0 ? 'Cr' : 'Dr'}
                           </td>
                           <td style={{ textAlign: 'center' }}>
-                            <button className="btn btn-secondary" style={{ padding: '0.3rem', color: 'var(--danger)' }} onClick={() => handleDelete(entry.id)} title="Delete">
-                              <Trash2 size={14} />
-                            </button>
+                            <div style={{ display: 'flex', gap: '0.25rem', justifyContent: 'center' }}>
+                              <button className="btn btn-primary" style={{ padding: '0.3rem' }} onClick={handleSaveEdit} title="Save">
+                                <Save size={14} />
+                              </button>
+                              <button className="btn btn-secondary" style={{ padding: '0.3rem' }} onClick={handleCancelEdit} title="Cancel">
+                                <X size={14} />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ) : (
+                        <tr key={entry.id}>
+                          <td>{formattedDate}</td>
+                          <td>{entry.partner_name}</td>
+                          <td>{entry.description}</td>
+                          <td style={{ textAlign: 'right', color: exp > 0 ? 'var(--danger)' : 'inherit' }}>
+                             {exp > 0 ? exp.toFixed(2) : '-'}
+                          </td>
+                          <td style={{ textAlign: 'right', color: rec > 0 ? 'var(--success)' : 'inherit' }}>
+                             {rec > 0 ? rec.toFixed(2) : '-'}
+                          </td>
+                          <td style={{ textAlign: 'right', fontWeight: 'bold', color: bal >= 0 ? 'var(--success)' : 'var(--danger)' }}>
+                            {Math.abs(bal).toFixed(2)} {bal >= 0 ? 'Cr' : 'Dr'}
+                          </td>
+                          <td style={{ textAlign: 'center' }}>
+                            <div style={{ display: 'flex', gap: '0.25rem', justifyContent: 'center' }}>
+                              <button className="btn btn-secondary" style={{ padding: '0.3rem', color: 'var(--primary)' }} onClick={() => handleEditClick(entry)} title="Edit">
+                                <Edit2 size={14} />
+                              </button>
+                              <button className="btn btn-secondary" style={{ padding: '0.3rem', color: 'var(--danger)' }} onClick={() => handleDelete(entry.id)} title="Delete">
+                                <Trash2 size={14} />
+                              </button>
+                            </div>
                           </td>
                         </tr>
                       );
@@ -378,7 +452,7 @@ const ExpensesSheet = () => {
               </table>
             </div>
           </>
-        )}
+        </div>
       </div>
     </div>
   );

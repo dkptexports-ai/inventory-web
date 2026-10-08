@@ -452,9 +452,11 @@ export async function getSalaryPayments() {
 
 // Partner Ledgers
 export async function getPartnerLedger(partnerName) {
-  const { data, error } = await supabase.from('partner_ledgers')
-    .select('*')
-    .eq('partner_name', partnerName)
+  let query = supabase.from('partner_ledgers').select('*');
+  if (partnerName) {
+    query = query.eq('partner_name', partnerName);
+  }
+  const { data, error } = await query
     .order('date', { ascending: true })
     .order('created_at', { ascending: true });
   if (error) throw error;
@@ -472,6 +474,12 @@ export async function getUniquePartners() {
 export async function addPartnerLedgerEntry(payload) {
   const dataToInsert = Array.isArray(payload) ? payload : [payload];
   const { error } = await supabase.from('partner_ledgers').insert(dataToInsert);
+  if (error) throw error;
+  return true;
+}
+
+export async function updatePartnerLedgerEntry(id, payload) {
+  const { error } = await supabase.from('partner_ledgers').update(payload).eq('id', id);
   if (error) throw error;
   return true;
 }
