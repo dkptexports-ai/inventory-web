@@ -344,32 +344,71 @@ tfoot td {
 }
 
 /* Print Styles */
+.print-only {
+  display: none;
+}
+
 @media print {
   body {
-    background-color: white;
-    color: black;
+    background-color: white !important;
+    color: black !important;
+    font-size: 11pt !important;
   }
-  .sidebar, .page-header, .no-print, button {
+  .print-only {
+    display: block !important;
+  }
+  .sidebar, .page-header, .no-print, button, input[type="button"] {
     display: none !important;
   }
   .app-container {
-    height: auto;
-    overflow: visible;
+    height: auto !important;
+    overflow: visible !important;
+    display: block !important;
   }
   .main-content {
-    padding: 0;
-    overflow: visible;
+    padding: 0 !important;
+    overflow: visible !important;
+    width: 100% !important;
   }
   .glass-card {
-    box-shadow: none;
-    border: 1px solid #ccc;
-    background: white;
+    box-shadow: none !important;
+    border: 1px solid #cbd5e1 !important;
+    background: white !important;
+    break-inside: avoid;
+    margin-bottom: 1.25rem !important;
+    padding: 0.75rem !important;
+  }
+  .table-container {
+    box-shadow: none !important;
+    border: 1px solid #cbd5e1 !important;
+    overflow: visible !important;
+  }
+  table {
+    border-collapse: collapse !important;
+    width: 100% !important;
+    page-break-inside: auto;
+  }
+  tr {
+    page-break-inside: avoid;
+    page-break-after: auto;
   }
   td, th {
-    color: black;
-    border-color: #ddd;
-  }
-  h2, p {
     color: black !important;
+    border: 1px solid #cbd5e1 !important;
+    padding: 0.4rem 0.5rem !important;
+  }
+  th {
+    background-color: #f1f5f9 !important;
+    color: #0f172a !important;
+    font-weight: 700 !important;
+  }
+  h1, h2, h3, p, span {
+    color: black !important;
+  }
+  .print-input-text {
+    display: block !important;
+  }
+  .print-input-field {
+    display: none !important;
   }
 }
