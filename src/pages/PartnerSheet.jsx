@@ -1,5 +1,10 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { getPartnerLedger, getUniquePartners } from '../lib/api';
+import { 
+  getPartnerLedger, 
+  getUniquePartners, 
+  getPartnerMonthlyAdjustments, 
+  savePartnerMonthlyAdjustments 
+} from '../lib/api';
 import { 
   IndianRupee, 
   Search, 
@@ -16,7 +21,8 @@ import {
   FileText,
   AlertCircle,
   CheckCircle2,
-  Receipt
+  Receipt,
+  Save
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 
@@ -29,6 +35,14 @@ const formatDate = (dateStr) => {
   }
   const d = new Date(dateStr);
   return `${String(d.getDate()).padStart(2, '0')}-${String(d.getMonth() + 1).padStart(2, '0')}-${d.getFullYear()}`;
+};
+
+// Helper to format Month (YYYY-MM) to human readable string (e.g. October 2026)
+const formatMonthName = (mStr) => {
+  if (!mStr) return '';
+  const [y, m] = mStr.split('-').map(Number);
+  const d = new Date(y, m - 1, 1);
+  return d.toLocaleString('en-IN', { month: 'long', year: 'numeric' });
 };
 
 const PartnerSheet = () => {
@@ -45,51 +59,105 @@ const PartnerSheet = () => {
 
   // Custom settlement summary items (Salary, EMI, etc.)
   const [customRows, setCustomRows] = useState([]);
+  const [savedRowsSnapshot, setSavedRowsSnapshot] = useState([]);
+  const [isDirty, setIsDirty] = useState(false);
+  const [savingSummary, setSavingSummary] = useState(false);
+  const [loadingSummary, setLoadingSummary] = useState(false);
+  const [saveSuccessMsg, setSaveSuccessMsg] = useState('');
+  const [saveErrorMsg, setSaveErrorMsg] = useState('');
+
+  // Effective Month (either directly selectedMonth, or matching full month from startDate/endDate)
+  const effectiveMonth = selectedMonth || (startDate && endDate && startDate.slice(0, 7) === endDate.slice(0, 7) ? startDate.slice(0, 7) : '');
 
   useEffect(() => {
     fetchPartners();
+    // Default to current month on initial mount for immediate settlement view
+    const now = new Date();
+    const y = now.getFullYear();
+    const m = now.getMonth() + 1;
+    const mStr = `${y}-${String(m).padStart(2, '0')}`;
+    handleMonthChange(mStr);
   }, []);
 
-  // When selected partner changes: load ledger data & load saved summary items
+  // When selected partner changes: load ledger data
   useEffect(() => {
     if (selectedPartner) {
       loadData(selectedPartner);
-      loadSavedSummary(selectedPartner);
     } else {
       setRawEntries([]);
-      setCustomRows([]);
     }
   }, [selectedPartner]);
 
-  // Save custom summary rows to localStorage per partner whenever updated
+  // When selected partner or effective month changes: load month adjustments from DB/cache
   useEffect(() => {
-    if (selectedPartner && customRows.length > 0) {
-      try {
-        localStorage.setItem(`partner_summary_${selectedPartner}`, JSON.stringify(customRows));
-      } catch (e) {
-        console.error('Failed to save summary to localStorage', e);
-      }
+    if (selectedPartner && effectiveMonth) {
+      loadMonthAdjustments(selectedPartner, effectiveMonth);
+    } else {
+      setCustomRows([]);
+      setSavedRowsSnapshot([]);
+      setIsDirty(false);
+      setSaveSuccessMsg('');
+      setSaveErrorMsg('');
     }
-  }, [customRows, selectedPartner]);
+  }, [selectedPartner, effectiveMonth]);
 
-  const loadSavedSummary = (partner) => {
+  const loadMonthAdjustments = async (partner, month) => {
     try {
-      const saved = localStorage.getItem(`partner_summary_${partner}`);
-      if (saved) {
-        setCustomRows(JSON.parse(saved));
+      setLoadingSummary(true);
+      setSaveSuccessMsg('');
+      setSaveErrorMsg('');
+      setIsDirty(false);
+
+      const dbRows = await getPartnerMonthlyAdjustments(partner, month);
+      
+      let rowsToSet = [];
+      if (dbRows && dbRows.length > 0) {
+        rowsToSet = dbRows.map(r => ({
+          id: r.id || `${Date.now()}_${Math.random()}`,
+          description: r.description || '',
+          payment: (r.payment !== null && r.payment !== undefined && Number(r.payment) > 0) ? String(r.payment) : '',
+          receipt: (r.receipt !== null && r.receipt !== undefined && Number(r.receipt) > 0) ? String(r.receipt) : ''
+        }));
       } else {
-        // Pre-populate with typical default partner rows
-        setCustomRows([
-          { id: 1, description: 'Monthly Salary', payment: '', receipt: '' },
-          { id: 2, description: 'Car / Vehicle EMI', payment: '', receipt: '' }
-        ]);
+        // Check local storage fallback for this partner & month
+        const local = localStorage.getItem(`partner_summary_${partner}_${month}`);
+        if (local) {
+          try {
+            const parsed = JSON.parse(local);
+            if (Array.isArray(parsed) && parsed.length > 0) {
+              rowsToSet = parsed.map(r => ({
+                id: r.id || `${Date.now()}_${Math.random()}`,
+                description: r.description || '',
+                payment: (r.payment !== null && r.payment !== undefined && Number(r.payment) > 0) ? String(r.payment) : '',
+                receipt: (r.receipt !== null && r.receipt !== undefined && Number(r.receipt) > 0) ? String(r.receipt) : ''
+              }));
+            }
+          } catch (e) {}
+        }
       }
-    } catch (e) {
-      console.error(e);
-      setCustomRows([
-        { id: 1, description: 'Monthly Salary', payment: '', receipt: '' },
-        { id: 2, description: 'Car / Vehicle EMI', payment: '', receipt: '' }
-      ]);
+
+      // If still empty (new month never saved before), pre-populate default template rows
+      if (rowsToSet.length === 0) {
+        rowsToSet = [
+          { id: 'default-salary', description: 'Monthly Salary', payment: '', receipt: '' },
+          { id: 'default-emi', description: 'Car / Vehicle EMI', payment: '', receipt: '' }
+        ];
+      }
+
+      setCustomRows(rowsToSet);
+      setSavedRowsSnapshot(JSON.parse(JSON.stringify(rowsToSet)));
+      setIsDirty(false);
+    } catch (err) {
+      console.error('Failed to load month adjustments', err);
+      const fallbackRows = [
+        { id: 'default-salary', description: 'Monthly Salary', payment: '', receipt: '' },
+        { id: 'default-emi', description: 'Car / Vehicle EMI', payment: '', receipt: '' }
+      ];
+      setCustomRows(fallbackRows);
+      setSavedRowsSnapshot(JSON.parse(JSON.stringify(fallbackRows)));
+      setIsDirty(false);
+    } finally {
+      setLoadingSummary(false);
     }
   };
 
@@ -258,23 +326,53 @@ const PartnerSheet = () => {
   // Custom Summary Rows Handlers
   const handleAddRow = () => {
     const newRow = {
-      id: Date.now(),
+      id: `${Date.now()}_${Math.random()}`,
       description: '',
       payment: '',
       receipt: ''
     };
     setCustomRows([...customRows, newRow]);
+    setIsDirty(true);
   };
 
   const handleUpdateRow = (id, field, value) => {
     setCustomRows(customRows.map(r => r.id === id ? { ...r, [field]: value } : r));
+    setIsDirty(true);
   };
 
   const handleRemoveRow = (id) => {
     const filtered = customRows.filter(r => r.id !== id);
     setCustomRows(filtered);
-    if (selectedPartner) {
-      localStorage.setItem(`partner_summary_${selectedPartner}`, JSON.stringify(filtered));
+    setIsDirty(true);
+  };
+
+  const handleDiscardChanges = () => {
+    setCustomRows(JSON.parse(JSON.stringify(savedRowsSnapshot)));
+    setIsDirty(false);
+    setSaveErrorMsg('');
+  };
+
+  const handleSaveSummary = async () => {
+    if (!selectedPartner || !effectiveMonth) {
+      setSaveErrorMsg('Please select a partner and month to save.');
+      return;
+    }
+    try {
+      setSavingSummary(true);
+      setSaveErrorMsg('');
+      setSaveSuccessMsg('');
+
+      await savePartnerMonthlyAdjustments(selectedPartner, effectiveMonth, customRows);
+
+      setSavedRowsSnapshot(JSON.parse(JSON.stringify(customRows)));
+      setIsDirty(false);
+      setSaveSuccessMsg(`Settlement details for ${formatMonthName(effectiveMonth)} successfully saved!`);
+      setTimeout(() => setSaveSuccessMsg(''), 4000);
+    } catch (err) {
+      console.error('Save failed', err);
+      setSaveErrorMsg('Save failed: ' + (err.message || 'Check database connection'));
+    } finally {
+      setSavingSummary(false);
     }
   };
 
@@ -288,9 +386,9 @@ const PartnerSheet = () => {
     const legPay = periodExpense;
     const legRec = periodReceipt;
 
-    // 3. Custom Summary Rows (Salary, EMI, etc.)
-    const customPay = customRows.reduce((sum, r) => sum + (Number(r.payment) || 0), 0);
-    const customRec = customRows.reduce((sum, r) => sum + (Number(r.receipt) || 0), 0);
+    // 3. Custom Summary Rows (Salary, EMI, etc.) - Only included when a month is active
+    const customPay = effectiveMonth ? customRows.reduce((sum, r) => sum + (Number(r.payment) || 0), 0) : 0;
+    const customRec = effectiveMonth ? customRows.reduce((sum, r) => sum + (Number(r.receipt) || 0), 0) : 0;
 
     const sumPay = opPay + legPay + customPay;
     const sumRec = opRec + legRec + customRec;
@@ -301,7 +399,7 @@ const PartnerSheet = () => {
       totalReceipt: sumRec,
       netBalanceForPayment: netBal
     };
-  }, [startDate, openingBalance, periodExpense, periodReceipt, customRows]);
+  }, [startDate, openingBalance, periodExpense, periodReceipt, customRows, effectiveMonth]);
 
   // Export to Excel
   const exportToExcel = () => {
@@ -602,24 +700,117 @@ const PartnerSheet = () => {
               <div>
                 <h2 style={{ fontSize: '1.15rem', fontWeight: 700, color: 'var(--accent-primary)', display: 'flex', alignItems: 'center', gap: '0.5rem', margin: 0 }}>
                   <Calculator size={20} /> Partner Payment & Settlement Summary ({selectedPartner})
+                  {effectiveMonth && (
+                    <span className="badge badge-primary" style={{ fontSize: '0.8rem', marginLeft: '0.25rem', background: '#dbeafe', color: '#1e40af', padding: '0.2rem 0.6rem' }}>
+                      📅 {formatMonthName(effectiveMonth)}
+                    </span>
+                  )}
                 </h2>
                 <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', margin: '0.2rem 0 0 0' }}>
                   Total Expenses + Salary + EMI + Custom Adjustments = Net Balance for Payment / Excess
                 </p>
               </div>
 
-              <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }} className="no-print">
+              {effectiveMonth && (
+                <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }} className="no-print">
+                  <button
+                    type="button"
+                    className="btn btn-primary"
+                    onClick={handleAddRow}
+                    style={{ fontSize: '0.825rem', padding: '0.35rem 0.75rem', display: 'flex', alignItems: 'center', gap: '0.35rem' }}
+                    title="Add new payment or receipt adjustment row"
+                  >
+                    <Plus size={15} /> Add New Row
+                  </button>
+
+                  {isDirty && (
+                    <button
+                      type="button"
+                      className="btn btn-secondary"
+                      onClick={handleDiscardChanges}
+                      style={{
+                        fontSize: '0.825rem',
+                        padding: '0.35rem 0.75rem',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '0.35rem',
+                        color: '#dc2626',
+                        borderColor: '#fca5a5'
+                      }}
+                      title="Discard unsaved edits and restore last saved state"
+                    >
+                      <RotateCcw size={14} /> Discard
+                    </button>
+                  )}
+
+                  <button
+                    type="button"
+                    className="btn"
+                    onClick={handleSaveSummary}
+                    disabled={!isDirty || savingSummary}
+                    style={{
+                      fontSize: '0.825rem',
+                      padding: '0.35rem 0.85rem',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '0.4rem',
+                      fontWeight: 600,
+                      backgroundColor: isDirty ? '#16a34a' : '#94a3b8',
+                      color: '#ffffff',
+                      border: 'none',
+                      cursor: isDirty && !savingSummary ? 'pointer' : 'not-allowed',
+                      boxShadow: isDirty ? '0 2px 4px rgba(22, 163, 74, 0.3)' : 'none',
+                      transition: 'all 0.2s ease'
+                    }}
+                    title={isDirty ? "Save month changes to database" : "No unsaved changes"}
+                  >
+                    <Save size={15} />
+                    {savingSummary ? 'Saving...' : (isDirty ? 'Save Changes' : 'Saved')}
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* Unsaved / Success / Error Alert Messages */}
+            {isDirty && (
+              <div className="no-print" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.55rem 0.85rem', background: '#fffbeb', border: '1px solid #fde68a', borderRadius: '0.375rem', marginBottom: '0.85rem', fontSize: '0.85rem', color: '#92400e' }}>
+                <AlertCircle size={16} style={{ color: '#d97706', flexShrink: 0 }} />
+                <span><strong>Unsaved Changes:</strong> Is mahine me badlaav kiye gaye hain. Database me save karne ke liye upar <strong>"Save Changes"</strong> button dabayein.</span>
+              </div>
+            )}
+
+            {saveSuccessMsg && (
+              <div className="no-print" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.55rem 0.85rem', background: '#f0fdf4', border: '1px solid #86efac', borderRadius: '0.375rem', marginBottom: '0.85rem', fontSize: '0.85rem', color: '#166534' }}>
+                <CheckCircle2 size={16} style={{ color: '#16a34a', flexShrink: 0 }} />
+                <span>{saveSuccessMsg}</span>
+              </div>
+            )}
+
+            {saveErrorMsg && (
+              <div className="no-print" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.55rem 0.85rem', background: '#fef2f2', border: '1px solid #fca5a5', borderRadius: '0.375rem', marginBottom: '0.85rem', fontSize: '0.85rem', color: '#991b1b' }}>
+                <AlertCircle size={16} style={{ color: '#dc2626', flexShrink: 0 }} />
+                <span>{saveErrorMsg}</span>
+              </div>
+            )}
+
+            {!effectiveMonth && (
+              <div className="no-print" style={{ padding: '1.25rem', background: '#f8fafc', borderRadius: '0.375rem', border: '1px dashed #cbd5e1', textAlign: 'center', marginBottom: '1rem' }}>
+                <p style={{ margin: '0 0 0.35rem 0', fontWeight: 600, color: '#334155', fontSize: '0.9rem' }}>
+                  📅 Monthly Salary, Car EMI aur Adjustments mahina-wise (Month-wise) manage aur save hote hain.
+                </p>
+                <p style={{ margin: '0 0 0.75rem 0', fontSize: '0.825rem', color: '#64748b' }}>
+                  Kripya upar filter bar se Mahina chunein ya neeche button dabayein:
+                </p>
                 <button
                   type="button"
                   className="btn btn-primary"
-                  onClick={handleAddRow}
-                  style={{ fontSize: '0.825rem', padding: '0.35rem 0.75rem' }}
-                  title="Add new payment or receipt adjustment row"
+                  onClick={setThisMonth}
+                  style={{ fontSize: '0.825rem', padding: '0.35rem 0.75rem', display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }}
                 >
-                  <Plus size={15} /> Add New Row
+                  <CalendarDays size={15} /> Select Current Month ({new Date().toLocaleString('en-IN', { month: 'short', year: 'numeric' })})
                 </button>
               </div>
-            </div>
+            )}
 
             {/* Datalist suggestions for common settlement items */}
             <datalist id="summary-descriptions">
@@ -801,10 +992,10 @@ const PartnerSheet = () => {
                   ))}
 
                   {/* Empty state prompt for custom rows */}
-                  {customRows.length === 0 && (
+                  {effectiveMonth && customRows.length === 0 && (
                     <tr className="no-print">
                       <td colSpan="4" style={{ textAlign: 'center', padding: '1rem', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
-                        No additional rows yet. Click <strong>"+ Add New Row"</strong> above to add Salary, EMI, or other adjustments.
+                        No additional rows yet for {formatMonthName(effectiveMonth)}. Click <strong>"+ Add New Row"</strong> above to add Salary, EMI, or other adjustments.
                       </td>
                     </tr>
                   )}

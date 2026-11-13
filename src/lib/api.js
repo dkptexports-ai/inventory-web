@@ -454,7 +454,7 @@ export async function getSalaryPayments() {
 export async function getPartnerLedger(partnerName) {
   let query = supabase.from('partner_ledgers').select('*');
   if (partnerName) {
-    query = query.eq('partner_name', partnerName);
+    query = query.ilike('partner_name', `%${partnerName}%`);
   }
   const { data, error } = await query
     .order('date', { ascending: true })
@@ -495,6 +495,79 @@ export async function updatePartnerLedgerEntry(id, payload) {
 export async function deletePartnerLedgerEntry(id) {
   const { error } = await supabase.from('partner_ledgers').delete().eq('id', id);
   if (error) throw error;
+  return true;
+}
+
+// Partner Monthly Adjustments (Salary, EMI, etc. per month)
+export async function getPartnerMonthlyAdjustments(partnerName, monthYear) {
+  if (!partnerName || !monthYear) return [];
+  try {
+    const { data, error } = await supabase
+      .from('partner_monthly_adjustments')
+      .select('*')
+      .ilike('partner_name', `%${partnerName}%`)
+      .eq('month_year', monthYear)
+      .order('created_at', { ascending: true });
+
+    if (error) {
+      console.warn('Could not fetch partner_monthly_adjustments from DB:', error.message);
+      try {
+        const local = localStorage.getItem(`partner_summary_${partnerName}_${monthYear}`);
+        if (local) return JSON.parse(local);
+      } catch (e) {}
+      return null;
+    }
+    return data || [];
+  } catch (err) {
+    console.error('getPartnerMonthlyAdjustments error', err);
+    try {
+      const local = localStorage.getItem(`partner_summary_${partnerName}_${monthYear}`);
+      if (local) return JSON.parse(local);
+    } catch (e) {}
+    return null;
+  }
+}
+
+export async function savePartnerMonthlyAdjustments(partnerName, monthYear, rows) {
+  if (!partnerName || !monthYear) {
+    throw new Error('Partner name and month are required to save settlement adjustments.');
+  }
+
+  const validRows = (rows || [])
+    .filter(r => r.description && String(r.description).trim() !== '')
+    .map(r => ({
+      partner_name: partnerName,
+      month_year: monthYear,
+      description: String(r.description).trim(),
+      payment: Number(r.payment) || 0,
+      receipt: Number(r.receipt) || 0
+    }));
+
+  try {
+    localStorage.setItem(`partner_summary_${partnerName}_${monthYear}`, JSON.stringify(validRows));
+  } catch (e) {}
+
+  const { error: delError } = await supabase
+    .from('partner_monthly_adjustments')
+    .delete()
+    .eq('partner_name', partnerName)
+    .eq('month_year', monthYear);
+
+  if (delError) {
+    console.warn('DB delete error in partner_monthly_adjustments:', delError.message);
+    throw delError;
+  }
+
+  if (validRows.length > 0) {
+    const { error: insError } = await supabase
+      .from('partner_monthly_adjustments')
+      .insert(validRows);
+    if (insError) {
+      console.warn('DB insert error in partner_monthly_adjustments:', insError.message);
+      throw insError;
+    }
+  }
+
   return true;
 }
 

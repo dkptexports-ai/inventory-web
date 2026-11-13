@@ -206,3 +206,20 @@ ALTER TABLE employee_sequences ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS "Allow public read/write on employee_sequences" ON employee_sequences;
 CREATE POLICY "Allow public read/write on employee_sequences" ON employee_sequences FOR ALL USING (true) WITH CHECK (true);
+
+-- Create partner_monthly_adjustments table for month-wise custom salary, car EMI, and adjustments
+CREATE TABLE IF NOT EXISTS partner_monthly_adjustments (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  partner_name TEXT NOT NULL,
+  month_year TEXT NOT NULL,
+  description TEXT NOT NULL,
+  payment NUMERIC DEFAULT 0,
+  receipt NUMERIC DEFAULT 0,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+ALTER TABLE partner_monthly_adjustments ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Allow public read/write on partner_monthly_adjustments" ON partner_monthly_adjustments;
+CREATE POLICY "Allow public read/write on partner_monthly_adjustments" ON partner_monthly_adjustments FOR ALL USING (true) WITH CHECK (true);
+
