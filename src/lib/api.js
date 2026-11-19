@@ -499,6 +499,25 @@ export async function deletePartnerLedgerEntry(id) {
 }
 
 // Partner Monthly Adjustments (Salary, EMI, etc. per month)
+export async function getAllPartnerMonthlyAdjustments(partnerName) {
+  if (!partnerName) return [];
+  try {
+    const { data, error } = await supabase
+      .from('partner_monthly_adjustments')
+      .select('*')
+      .ilike('partner_name', `%${partnerName}%`)
+      .order('created_at', { ascending: true });
+    if (error) {
+      console.warn('getAllPartnerMonthlyAdjustments error:', error.message);
+      return [];
+    }
+    return data || [];
+  } catch (err) {
+    console.error('getAllPartnerMonthlyAdjustments err', err);
+    return [];
+  }
+}
+
 export async function getPartnerMonthlyAdjustments(partnerName, monthYear) {
   if (!partnerName || !monthYear) return [];
   try {
@@ -569,6 +588,25 @@ export async function savePartnerMonthlyAdjustments(partnerName, monthYear, rows
   }
 
   return true;
+}
+
+export async function recordPartnerPayment({ partnerName, targetMonth, paymentDate, amount, mode }) {
+  if (!partnerName || !targetMonth || !amount) {
+    throw new Error('Partner name, month and amount are required.');
+  }
+  const desc = `Payment received on ${paymentDate}${mode ? ' (' + mode + ')' : ''}`;
+  const { data, error } = await supabase
+    .from('partner_monthly_adjustments')
+    .insert([{
+      partner_name: partnerName,
+      month_year: targetMonth,
+      description: desc,
+      payment: 0,
+      receipt: Number(amount) || 0
+    }])
+    .select();
+  if (error) throw error;
+  return data;
 }
 
 // Customer Receipts

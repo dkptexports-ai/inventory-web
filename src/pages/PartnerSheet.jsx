@@ -2,8 +2,9 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { 
   getPartnerLedger, 
   getUniquePartners, 
-  getPartnerMonthlyAdjustments, 
-  savePartnerMonthlyAdjustments 
+  getAllPartnerMonthlyAdjustments,
+  savePartnerMonthlyAdjustments,
+  recordPartnerPayment
 } from '../lib/api';
 import { 
   IndianRupee, 
@@ -15,18 +16,23 @@ import {
   Printer, 
   Plus, 
   Trash2, 
-  Filter, 
   User, 
-  Calculator, 
   FileText,
   AlertCircle,
   CheckCircle2,
+  Clock,
+  Save,
+  ArrowLeft,
+  ChevronRight,
+  TrendingUp,
   Receipt,
-  Save
+  CreditCard,
+  Building2,
+  Sparkles
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 
-// Helper to safely format dates DD-MM-YYYY without timezone skew
+// Helper to format dates DD-MM-YYYY
 const formatDate = (dateStr) => {
   if (!dateStr) return '-';
   const parts = String(dateStr).split('T')[0].split('-');
@@ -37,7 +43,7 @@ const formatDate = (dateStr) => {
   return `${String(d.getDate()).padStart(2, '0')}-${String(d.getMonth() + 1).padStart(2, '0')}-${d.getFullYear()}`;
 };
 
-// Helper to format Month (YYYY-MM) to human readable string (e.g. October 2026)
+// Helper to format Month (YYYY-MM) to string (e.g. October 2026)
 const formatMonthName = (mStr) => {
   if (!mStr) return '';
   const [y, m] = mStr.split('-').map(Number);
@@ -46,119 +52,59 @@ const formatMonthName = (mStr) => {
 };
 
 const PartnerSheet = () => {
+  // Partner selection
   const [uniquePartners, setUniquePartners] = useState([]);
   const [selectedPartner, setSelectedPartner] = useState('');
-  const [rawEntries, setRawEntries] = useState([]);
+  
+  // Data states
+  const [rawLedgerEntries, setRawLedgerEntries] = useState([]);
+  const [rawAdjustments, setRawAdjustments] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
-  // Date & Month filter states
-  const [selectedMonth, setSelectedMonth] = useState(''); // YYYY-MM
-  const [startDate, setStartDate] = useState(''); // YYYY-MM-DD
-  const [endDate, setEndDate] = useState(''); // YYYY-MM-DD
+  // View state: null = Level 1 (Scorecard Overview), "YYYY-MM" = Level 2 (Month Detail)
+  const [activeViewMonth, setActiveViewMonth] = useState(null);
 
-  // Custom settlement summary items (Salary, EMI, etc.)
-  const [customRows, setCustomRows] = useState([]);
-  const [savedRowsSnapshot, setSavedRowsSnapshot] = useState([]);
-  const [isDirty, setIsDirty] = useState(false);
-  const [savingSummary, setSavingSummary] = useState(false);
-  const [loadingSummary, setLoadingSummary] = useState(false);
-  const [saveSuccessMsg, setSaveSuccessMsg] = useState('');
-  const [saveErrorMsg, setSaveErrorMsg] = useState('');
+  // Month-wise editable fixed rows state for the active month (in-memory)
+  const [monthFixedRows, setMonthFixedRows] = useState([]);
+  const [fixedRowsSnapshot, setFixedRowsSnapshot] = useState([]);
+  const [isFixedDirty, setIsFixedDirty] = useState(false);
+  const [savingFixed, setSavingFixed] = useState(false);
+  const [fixedSuccessMsg, setFixedSuccessMsg] = useState('');
 
-  // Effective Month (either directly selectedMonth, or matching full month from startDate/endDate)
-  const effectiveMonth = selectedMonth || (startDate && endDate && startDate.slice(0, 7) === endDate.slice(0, 7) ? startDate.slice(0, 7) : '');
+  // Payment Recording State (for recording new payments)
+  const [showAddPaymentForm, setShowAddPaymentForm] = useState(false);
+  const [newPaymentDate, setNewPaymentDate] = useState(new Date().toISOString().split('T')[0]);
+  const [newPaymentAmount, setNewPaymentAmount] = useState('');
+  const [newPaymentMode, setNewPaymentMode] = useState('');
+  const [newPaymentTargetMonth, setNewPaymentTargetMonth] = useState('');
+  const [savingPayment, setSavingPayment] = useState(false);
 
+  // Receipt to Month Mapping (allows changing target month for ledger receipts)
+  const [paymentTargetMap, setPaymentTargetMap] = useState({});
+
+  // Voucher search filter in detail view
+  const [voucherSearch, setVoucherSearch] = useState('');
+
+  // Initial load: Fetch partners
   useEffect(() => {
     fetchPartners();
-    // Default to current month on initial mount for immediate settlement view
-    const now = new Date();
-    const y = now.getFullYear();
-    const m = now.getMonth() + 1;
-    const mStr = `${y}-${String(m).padStart(2, '0')}`;
-    handleMonthChange(mStr);
   }, []);
 
-  // When selected partner changes: load ledger data
+  // Load saved payment-month mappings from localStorage
   useEffect(() => {
-    if (selectedPartner) {
-      loadData(selectedPartner);
-    } else {
-      setRawEntries([]);
-    }
-  }, [selectedPartner]);
-
-  // When selected partner or effective month changes: load month adjustments from DB/cache
-  useEffect(() => {
-    if (selectedPartner && effectiveMonth) {
-      loadMonthAdjustments(selectedPartner, effectiveMonth);
-    } else {
-      setCustomRows([]);
-      setSavedRowsSnapshot([]);
-      setIsDirty(false);
-      setSaveSuccessMsg('');
-      setSaveErrorMsg('');
-    }
-  }, [selectedPartner, effectiveMonth]);
-
-  const loadMonthAdjustments = async (partner, month) => {
     try {
-      setLoadingSummary(true);
-      setSaveSuccessMsg('');
-      setSaveErrorMsg('');
-      setIsDirty(false);
+      const saved = localStorage.getItem('partner_payment_month_targets');
+      if (saved) setPaymentTargetMap(JSON.parse(saved));
+    } catch (e) {}
+  }, []);
 
-      const dbRows = await getPartnerMonthlyAdjustments(partner, month);
-      
-      let rowsToSet = [];
-      if (dbRows && dbRows.length > 0) {
-        rowsToSet = dbRows.map(r => ({
-          id: r.id || `${Date.now()}_${Math.random()}`,
-          description: r.description || '',
-          payment: (r.payment !== null && r.payment !== undefined && Number(r.payment) > 0) ? String(r.payment) : '',
-          receipt: (r.receipt !== null && r.receipt !== undefined && Number(r.receipt) > 0) ? String(r.receipt) : ''
-        }));
-      } else {
-        // Check local storage fallback for this partner & month
-        const local = localStorage.getItem(`partner_summary_${partner}_${month}`);
-        if (local) {
-          try {
-            const parsed = JSON.parse(local);
-            if (Array.isArray(parsed) && parsed.length > 0) {
-              rowsToSet = parsed.map(r => ({
-                id: r.id || `${Date.now()}_${Math.random()}`,
-                description: r.description || '',
-                payment: (r.payment !== null && r.payment !== undefined && Number(r.payment) > 0) ? String(r.payment) : '',
-                receipt: (r.receipt !== null && r.receipt !== undefined && Number(r.receipt) > 0) ? String(r.receipt) : ''
-              }));
-            }
-          } catch (e) {}
-        }
-      }
-
-      // If still empty (new month never saved before), pre-populate default template rows
-      if (rowsToSet.length === 0) {
-        rowsToSet = [
-          { id: 'default-salary', description: 'Monthly Salary', payment: '', receipt: '' },
-          { id: 'default-emi', description: 'Car / Vehicle EMI', payment: '', receipt: '' }
-        ];
-      }
-
-      setCustomRows(rowsToSet);
-      setSavedRowsSnapshot(JSON.parse(JSON.stringify(rowsToSet)));
-      setIsDirty(false);
-    } catch (err) {
-      console.error('Failed to load month adjustments', err);
-      const fallbackRows = [
-        { id: 'default-salary', description: 'Monthly Salary', payment: '', receipt: '' },
-        { id: 'default-emi', description: 'Car / Vehicle EMI', payment: '', receipt: '' }
-      ];
-      setCustomRows(fallbackRows);
-      setSavedRowsSnapshot(JSON.parse(JSON.stringify(fallbackRows)));
-      setIsDirty(false);
-    } finally {
-      setLoadingSummary(false);
-    }
+  const savePaymentTargetMapping = (id, targetMonth) => {
+    const updated = { ...paymentTargetMap, [id]: targetMonth };
+    setPaymentTargetMap(updated);
+    try {
+      localStorage.setItem('partner_payment_month_targets', JSON.stringify(updated));
+    } catch (e) {}
   };
 
   const fetchPartners = async () => {
@@ -173,1119 +119,1209 @@ const PartnerSheet = () => {
     }
   };
 
-  const loadData = async (partner) => {
+  // When partner changes: reload all ledger entries & adjustments
+  useEffect(() => {
+    if (selectedPartner) {
+      loadPartnerData(selectedPartner);
+    } else {
+      setRawLedgerEntries([]);
+      setRawAdjustments([]);
+    }
+  }, [selectedPartner]);
+
+  const loadPartnerData = async (partner) => {
     try {
       setLoading(true);
       setError(null);
-      const data = await getPartnerLedger(partner);
-      
-      // Sort chronologically ascending
-      const sorted = (data || []).sort((a, b) => {
-        if (a.date !== b.date) {
-          return new Date(a.date) - new Date(b.date);
-        }
-        return new Date(a.created_at || 0) - new Date(b.created_at || 0);
-      });
 
-      setRawEntries(sorted);
+      const [ledgerData, adjData] = await Promise.all([
+        getPartnerLedger(partner),
+        getAllPartnerMonthlyAdjustments(partner)
+      ]);
+
+      setRawLedgerEntries(ledgerData || []);
+      setRawAdjustments(adjData || []);
     } catch (err) {
       console.error(err);
-      setError('Failed to load partner ledger data');
+      setError('Failed to load partner details');
     } finally {
       setLoading(false);
     }
   };
 
-  // Check if current startDate and endDate form a full calendar month
-  const checkIfMatchesFullMonth = (sDate, eDate) => {
-    if (!sDate || !eDate) {
-      setSelectedMonth('');
-      return;
-    }
-    const [sY, sM, sD] = sDate.split('-').map(Number);
-    const [eY, eM, eD] = eDate.split('-').map(Number);
-    if (sY === eY && sM === eM && sD === 1) {
-      const daysInMonth = new Date(sY, sM, 0).getDate();
-      if (eD === daysInMonth) {
-        setSelectedMonth(`${sY}-${String(sM).padStart(2, '0')}`);
-        return;
-      }
-    }
-    setSelectedMonth('');
-  };
+  // Extract all distinct months (YYYY-MM) present in transactions or adjustments
+  const availableMonths = useMemo(() => {
+    const set = new Set();
+    rawLedgerEntries.forEach(r => {
+      if (r.date) set.add(r.date.slice(0, 7));
+    });
+    rawAdjustments.forEach(a => {
+      if (a.month_year) set.add(a.month_year);
+    });
 
-  // Handle Month selector change (e.g. "2026-10")
-  const handleMonthChange = (monthVal) => {
-    setSelectedMonth(monthVal);
-    if (monthVal) {
-      const [y, m] = monthVal.split('-').map(Number);
-      const firstDay = `${y}-${String(m).padStart(2, '0')}-01`;
-      const daysInMonth = new Date(y, m, 0).getDate();
-      const lastDay = `${y}-${String(m).padStart(2, '0')}-${String(daysInMonth).padStart(2, '0')}`;
-      setStartDate(firstDay);
-      setEndDate(lastDay);
+    // Also include current month and last month if not present
+    const now = new Date();
+    const currM = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    set.add(currM);
+
+    return Array.from(set).sort().reverse();
+  }, [rawLedgerEntries, rawAdjustments]);
+
+  // Compute clean, month-by-month scorecard data (Zero Carry Forward)
+  const monthlyScorecards = useMemo(() => {
+    if (!selectedPartner) return [];
+
+    return availableMonths.map(month => {
+      // 1. Vouchers for this month (out-of-pocket expenses)
+      const monthVouchers = rawLedgerEntries.filter(r => {
+        return r.date && r.date.startsWith(month) && Number(r.expense) > 0;
+      });
+      const voucherTotal = monthVouchers.reduce((s, r) => s + (Number(r.expense) || 0), 0);
+
+      // 2. Fixed Entitlements for this month (Salary, EMI) from adjustments
+      const monthFixed = rawAdjustments.filter(a => {
+        return a.month_year === month && Number(a.payment) > 0;
+      });
+      const fixedTotal = monthFixed.reduce((s, a) => s + (Number(a.payment) || 0), 0);
+
+      // Total Banta Tha (Payable)
+      const totalPayable = voucherTotal + fixedTotal;
+
+      // 3. Payments Paid by Company for this month
+      // a) Ledger receipts mapped to this month
+      const ledgerReceipts = rawLedgerEntries.filter(r => {
+        if (Number(r.receipt) <= 0) return false;
+        const targetMonth = paymentTargetMap[r.id] || r.settlement_month || (r.date ? r.date.slice(0, 7) : '');
+        return targetMonth === month;
+      });
+      const ledgerPaidTotal = ledgerReceipts.reduce((s, r) => s + (Number(r.receipt) || 0), 0);
+
+      // b) Direct payments recorded in adjustments for this month
+      const adjReceipts = rawAdjustments.filter(a => {
+        return a.month_year === month && Number(a.receipt) > 0;
+      });
+      const adjPaidTotal = adjReceipts.reduce((s, a) => s + (Number(a.receipt) || 0), 0);
+
+      const totalPaid = ledgerPaidTotal + adjPaidTotal;
+      const netBalance = totalPayable - totalPaid;
+
+      return {
+        month,
+        monthName: formatMonthName(month),
+        voucherCount: monthVouchers.length,
+        voucherTotal,
+        fixedTotal,
+        totalPayable,
+        totalPaid,
+        netBalance,
+        status: netBalance === 0 ? 'settled' : (netBalance > 0 ? 'pending' : 'advance'),
+        vouchers: monthVouchers,
+        fixedItems: monthFixed,
+        payments: [
+          ...ledgerReceipts.map(r => ({
+            id: r.id,
+            source: 'ledger',
+            date: r.date,
+            description: r.description || 'Reimbursement / Payment',
+            amount: Number(r.receipt) || 0
+          })),
+          ...adjReceipts.map(a => ({
+            id: a.id,
+            source: 'adjustment',
+            date: a.created_at ? a.created_at.split('T')[0] : '',
+            description: a.description || 'Payment',
+            amount: Number(a.receipt) || 0
+          }))
+        ]
+      };
+    });
+  }, [selectedPartner, availableMonths, rawLedgerEntries, rawAdjustments, paymentTargetMap]);
+
+  // Overall totals across all months
+  const overallSummary = useMemo(() => {
+    let vouchers = 0;
+    let fixed = 0;
+    let payable = 0;
+    let paid = 0;
+    let pending = 0;
+
+    monthlyScorecards.forEach(m => {
+      vouchers += m.voucherTotal;
+      fixed += m.fixedTotal;
+      payable += m.totalPayable;
+      paid += m.totalPaid;
+      if (m.netBalance > 0) pending += m.netBalance;
+    });
+
+    return { vouchers, fixed, payable, paid, pending };
+  }, [monthlyScorecards]);
+
+  // Active month scorecard item
+  const currentMonthData = useMemo(() => {
+    if (!activeViewMonth) return null;
+    return monthlyScorecards.find(m => m.month === activeViewMonth) || null;
+  }, [activeViewMonth, monthlyScorecards]);
+
+  // When activeViewMonth opens, load its fixed items into the editable state
+  useEffect(() => {
+    if (activeViewMonth && currentMonthData) {
+      const existing = currentMonthData.fixedItems.map(f => ({
+        id: f.id,
+        description: f.description || '',
+        payment: Number(f.payment) > 0 ? String(f.payment) : '',
+        receipt: Number(f.receipt) > 0 ? String(f.receipt) : ''
+      }));
+
+      // If empty, look if there's any previous month with fixed items to suggest auto-fill
+      if (existing.length > 0) {
+        setMonthFixedRows(existing);
+        setFixedRowsSnapshot(JSON.parse(JSON.stringify(existing)));
+      } else {
+        const defaultRows = [
+          { id: `salary_${Date.now()}`, description: 'Monthly Salary', payment: '', receipt: '' },
+          { id: `emi_${Date.now()}`, description: 'Car / Vehicle EMI', payment: '', receipt: '' }
+        ];
+        setMonthFixedRows(defaultRows);
+        setFixedRowsSnapshot(JSON.parse(JSON.stringify(defaultRows)));
+      }
+      setIsFixedDirty(false);
+      setFixedSuccessMsg('');
+    }
+  }, [activeViewMonth, currentMonthData]);
+
+  // Smart feature: Auto-fill fixed items from the closest previous month that has fixed data
+  const handleAutoFillFromPrevious = () => {
+    // Find the latest month before activeViewMonth that had fixed items
+    const prevScorecard = monthlyScorecards.find(m => m.month !== activeViewMonth && m.fixedItems.length > 0);
+    if (prevScorecard && prevScorecard.fixedItems.length > 0) {
+      const cloned = prevScorecard.fixedItems.map(f => ({
+        id: `clone_${Date.now()}_${Math.random()}`,
+        description: f.description,
+        payment: String(f.payment),
+        receipt: ''
+      }));
+      setMonthFixedRows(cloned);
+      setIsFixedDirty(true);
     } else {
-      setStartDate('');
-      setEndDate('');
+      alert('No previous month fixed data found to copy.');
     }
   };
 
-  // Handle Start Date change
-  const handleStartDateChange = (val) => {
-    setStartDate(val);
-    checkIfMatchesFullMonth(val, endDate);
+  // Fixed rows handlers
+  const handleAddFixedRow = () => {
+    setMonthFixedRows([
+      ...monthFixedRows,
+      { id: `new_${Date.now()}`, description: '', payment: '', receipt: '' }
+    ]);
+    setIsFixedDirty(true);
   };
 
-  // Handle End Date change
-  const handleEndDateChange = (val) => {
-    setEndDate(val);
-    checkIfMatchesFullMonth(startDate, val);
+  const handleUpdateFixedRow = (id, field, value) => {
+    setMonthFixedRows(monthFixedRows.map(r => r.id === id ? { ...r, [field]: value } : r));
+    setIsFixedDirty(true);
   };
 
-  // Quick preset: This Month
-  const setThisMonth = () => {
-    const now = new Date();
-    const y = now.getFullYear();
-    const m = now.getMonth() + 1;
-    const mStr = `${y}-${String(m).padStart(2, '0')}`;
-    handleMonthChange(mStr);
+  const handleRemoveFixedRow = (id) => {
+    setMonthFixedRows(monthFixedRows.filter(r => r.id !== id));
+    setIsFixedDirty(true);
   };
 
-  // Quick preset: Last Month
-  const setLastMonth = () => {
-    const now = new Date();
-    now.setMonth(now.getMonth() - 1);
-    const y = now.getFullYear();
-    const m = now.getMonth() + 1;
-    const mStr = `${y}-${String(m).padStart(2, '0')}`;
-    handleMonthChange(mStr);
+  const handleDiscardFixedEdits = () => {
+    setMonthFixedRows(JSON.parse(JSON.stringify(fixedRowsSnapshot)));
+    setIsFixedDirty(false);
   };
 
-  // Clear date filters (Show All Time)
-  const clearDates = () => {
-    setSelectedMonth('');
-    setStartDate('');
-    setEndDate('');
-  };
-
-  // Filter entries & calculate Opening Balance + Running Balance
-  const { filteredEntries, openingBalance, periodExpense, periodReceipt, finalBalance } = useMemo(() => {
-    if (!rawEntries || rawEntries.length === 0) {
-      return {
-        filteredEntries: [],
-        openingBalance: 0,
-        periodExpense: 0,
-        periodReceipt: 0,
-        finalBalance: 0
-      };
+  const handleSaveFixedRows = async () => {
+    if (!selectedPartner || !activeViewMonth) return;
+    try {
+      setSavingFixed(true);
+      await savePartnerMonthlyAdjustments(selectedPartner, activeViewMonth, monthFixedRows);
+      await loadPartnerData(selectedPartner);
+      setIsFixedDirty(false);
+      setFixedSuccessMsg(`Fixed details for ${formatMonthName(activeViewMonth)} saved successfully!`);
+      setTimeout(() => setFixedSuccessMsg(''), 4000);
+    } catch (err) {
+      console.error(err);
+      alert('Failed to save fixed details: ' + (err.message || 'Error'));
+    } finally {
+      setSavingFixed(false);
     }
-
-    let priorExpense = 0;
-    let priorReceipt = 0;
-    const periodList = [];
-
-    rawEntries.forEach(item => {
-      const itemDate = item.date ? String(item.date).split('T')[0] : '';
-      const exp = Number(item.expense) || 0;
-      const rec = Number(item.receipt) || 0;
-
-      if (startDate && itemDate < startDate) {
-        priorExpense += exp;
-        priorReceipt += rec;
-      } else if (!endDate || itemDate <= endDate) {
-        periodList.push(item);
-      }
-    });
-
-    const opBal = startDate ? (priorExpense - priorReceipt) : 0;
-    let runningBalance = opBal;
-    let pExp = 0;
-    let pRec = 0;
-
-    const calculatedList = periodList.map(item => {
-      const exp = Number(item.expense) || 0;
-      const rec = Number(item.receipt) || 0;
-      pExp += exp;
-      pRec += rec;
-      runningBalance = runningBalance + exp - rec;
-      return {
-        ...item,
-        calculatedBalance: runningBalance
-      };
-    });
-
-    return {
-      filteredEntries: calculatedList,
-      openingBalance: opBal,
-      periodExpense: pExp,
-      periodReceipt: pRec,
-      finalBalance: runningBalance
-    };
-  }, [rawEntries, startDate, endDate]);
-
-  // Custom Summary Rows Handlers
-  const handleAddRow = () => {
-    const newRow = {
-      id: `${Date.now()}_${Math.random()}`,
-      description: '',
-      payment: '',
-      receipt: ''
-    };
-    setCustomRows([...customRows, newRow]);
-    setIsDirty(true);
   };
 
-  const handleUpdateRow = (id, field, value) => {
-    setCustomRows(customRows.map(r => r.id === id ? { ...r, [field]: value } : r));
-    setIsDirty(true);
-  };
-
-  const handleRemoveRow = (id) => {
-    const filtered = customRows.filter(r => r.id !== id);
-    setCustomRows(filtered);
-    setIsDirty(true);
-  };
-
-  const handleDiscardChanges = () => {
-    setCustomRows(JSON.parse(JSON.stringify(savedRowsSnapshot)));
-    setIsDirty(false);
-    setSaveErrorMsg('');
-  };
-
-  const handleSaveSummary = async () => {
-    if (!selectedPartner || !effectiveMonth) {
-      setSaveErrorMsg('Please select a partner and month to save.');
+  // Payment Recording
+  const handleSavePayment = async (e) => {
+    e.preventDefault();
+    if (!newPaymentAmount || Number(newPaymentAmount) <= 0) {
+      alert('Please enter a valid payment amount.');
       return;
     }
+    const target = newPaymentTargetMonth || activeViewMonth;
+    if (!target) {
+      alert('Please select a target settlement month.');
+      return;
+    }
+
     try {
-      setSavingSummary(true);
-      setSaveErrorMsg('');
-      setSaveSuccessMsg('');
+      setSavingPayment(true);
+      await recordPartnerPayment({
+        partnerName: selectedPartner,
+        targetMonth: target,
+        paymentDate: newPaymentDate,
+        amount: newPaymentAmount,
+        mode: newPaymentMode
+      });
 
-      await savePartnerMonthlyAdjustments(selectedPartner, effectiveMonth, customRows);
-
-      setSavedRowsSnapshot(JSON.parse(JSON.stringify(customRows)));
-      setIsDirty(false);
-      setSaveSuccessMsg(`Settlement details for ${formatMonthName(effectiveMonth)} successfully saved!`);
-      setTimeout(() => setSaveSuccessMsg(''), 4000);
+      await loadPartnerData(selectedPartner);
+      setShowAddPaymentForm(false);
+      setNewPaymentAmount('');
+      setNewPaymentMode('');
+      alert(`Payment of ₹${Number(newPaymentAmount).toLocaleString('en-IN')} successfully recorded for ${formatMonthName(target)}!`);
     } catch (err) {
-      console.error('Save failed', err);
-      setSaveErrorMsg('Save failed: ' + (err.message || 'Check database connection'));
+      console.error(err);
+      alert('Failed to record payment: ' + (err.message || 'Error'));
     } finally {
-      setSavingSummary(false);
+      setSavingPayment(false);
     }
   };
 
-  // Calculations for Settlement Summary
-  const { totalPayment, totalReceipt, netBalanceForPayment } = useMemo(() => {
-    // 1. Opening Balance (if filtered by date)
-    const opPay = (startDate && openingBalance > 0) ? openingBalance : 0;
-    const opRec = (startDate && openingBalance < 0) ? Math.abs(openingBalance) : 0;
-
-    // 2. Ledger Expenses & Receipts
-    const legPay = periodExpense;
-    const legRec = periodReceipt;
-
-    // 3. Custom Summary Rows (Salary, EMI, etc.) - Only included when a month is active
-    const customPay = effectiveMonth ? customRows.reduce((sum, r) => sum + (Number(r.payment) || 0), 0) : 0;
-    const customRec = effectiveMonth ? customRows.reduce((sum, r) => sum + (Number(r.receipt) || 0), 0) : 0;
-
-    const sumPay = opPay + legPay + customPay;
-    const sumRec = opRec + legRec + customRec;
-    const netBal = sumPay - sumRec; // > 0 means Firm owes partner (To Pay); < 0 means Excess / Advance paid
-
-    return {
-      totalPayment: sumPay,
-      totalReceipt: sumRec,
-      netBalanceForPayment: netBal
-    };
-  }, [startDate, openingBalance, periodExpense, periodReceipt, customRows, effectiveMonth]);
-
-  // Export to Excel
-  const exportToExcel = () => {
-    if (!selectedPartner) return;
-
-    const periodLabel = startDate || endDate
-      ? `${startDate ? formatDate(startDate) : 'Start'} to ${endDate ? formatDate(endDate) : 'Present'}`
-      : 'All Time';
+  // Excel Export for a specific month
+  const exportMonthToExcel = (scorecard) => {
+    if (!scorecard) return;
 
     const wsData = [
       ['DKPT TEXTILE & APPARELS'],
-      [`Partner Settlement Statement - ${selectedPartner}`],
-      [`Period: ${periodLabel}`],
+      [`Partner Monthly Settlement Statement - ${selectedPartner}`],
+      [`Settlement Month: ${scorecard.monthName} (${scorecard.month})`],
       [`Generated On: ${new Date().toLocaleDateString('en-IN')}`],
       [],
-      ['PARTNER PAYMENT & SETTLEMENT SUMMARY'],
-      ['Description / Head', 'Payment (Payable / Dena Hai)', 'Receipt (Jama / Reimbursed)', 'Remarks']
+      ['1. FIXED MONTHLY ENTITLEMENTS (Salary & EMI)'],
+      ['Item Description', 'Amount Payable (₹)']
     ];
 
-    if (startDate && openingBalance !== 0) {
-      wsData.push([
-        `Opening Balance (As of ${formatDate(startDate)})`,
-        openingBalance > 0 ? openingBalance : 0,
-        openingBalance < 0 ? Math.abs(openingBalance) : 0,
-        openingBalance > 0 ? 'Prior Payable' : 'Prior Advance'
-      ]);
+    if (scorecard.fixedItems.length === 0) {
+      wsData.push(['No fixed entitlements recorded', 0]);
+    } else {
+      scorecard.fixedItems.forEach(f => {
+        wsData.push([f.description, Number(f.payment) || 0]);
+      });
     }
-
-    wsData.push([
-      `Partner Ledger Expenses (${selectedPartner})`,
-      periodExpense,
-      0,
-      'From Partner Ledger'
-    ]);
-
-    if (periodReceipt > 0) {
-      wsData.push([
-        `Partner Ledger Reimbursements`,
-        0,
-        periodReceipt,
-        'Paid back to Partner'
-      ]);
-    }
-
-    customRows.forEach(r => {
-      wsData.push([
-        r.description || 'Custom Item',
-        Number(r.payment) || 0,
-        Number(r.receipt) || 0,
-        'Additional Settlement Item'
-      ]);
-    });
-
-    wsData.push([
-      'TOTAL SUMMARY',
-      totalPayment,
-      totalReceipt,
-      netBalanceForPayment > 0 ? `NET TO PAY: ${netBalanceForPayment.toFixed(2)}` : `EXCESS / ADVANCE: ${Math.abs(netBalanceForPayment).toFixed(2)}`
-    ]);
-
+    wsData.push(['Subtotal Fixed Entitlements', scorecard.fixedTotal]);
     wsData.push([]);
-    wsData.push([]);
-    wsData.push(['DETAILED TRANSACTIONS LEDGER']);
-    wsData.push(['Date', 'Description', `Expense (Paid by ${selectedPartner})`, 'Receipt (Reimbursed)', 'Balance Payable']);
 
-    if (startDate) {
-      wsData.push([
-        formatDate(startDate),
-        'Opening Balance (B/F)',
-        '-',
-        '-',
-        openingBalance
-      ]);
+    wsData.push(['2. OUT-OF-POCKET EXPENSES (VOUCHERS)']);
+    wsData.push(['Date', 'Description / Voucher', 'Amount (₹)']);
+    if (scorecard.vouchers.length === 0) {
+      wsData.push(['-', 'No expense vouchers', 0]);
+    } else {
+      scorecard.vouchers.forEach(v => {
+        wsData.push([formatDate(v.date), v.description || '-', Number(v.expense) || 0]);
+      });
     }
+    wsData.push(['Subtotal Expense Vouchers', `${scorecard.voucherCount} vouchers`, scorecard.voucherTotal]);
+    wsData.push([]);
 
-    filteredEntries.forEach(item => {
-      wsData.push([
-        formatDate(item.date),
-        item.description || '-',
-        Number(item.expense) || 0,
-        Number(item.receipt) || 0,
-        item.calculatedBalance
-      ]);
-    });
+    wsData.push(['3. PAYMENTS & REIMBURSEMENTS (PAID BY COMPANY)']);
+    wsData.push(['Payment Date', 'Details / Mode', 'Amount Paid (₹)']);
+    if (scorecard.payments.length === 0) {
+      wsData.push(['-', 'No payments recorded for this month', 0]);
+    } else {
+      scorecard.payments.forEach(p => {
+        wsData.push([formatDate(p.date), p.description, p.amount]);
+      });
+    }
+    wsData.push(['Subtotal Payments Made', '-', scorecard.totalPaid]);
+    wsData.push([]);
 
+    wsData.push(['=============================================']);
+    wsData.push(['TOTAL PAYABLE (Fixed + Vouchers)', scorecard.totalPayable]);
+    wsData.push(['TOTAL PAID BY COMPANY', scorecard.totalPaid]);
     wsData.push([
-      'Ledger Total',
-      `${filteredEntries.length} entries`,
-      periodExpense,
-      periodReceipt,
-      finalBalance
+      scorecard.netBalance > 0 ? 'NET PENDING (COMPANY TO PAY)' : (scorecard.netBalance === 0 ? 'STATUS: FULLY SETTLED' : 'EXCESS PAID (ADVANCE)'),
+      Math.abs(scorecard.netBalance)
     ]);
 
     const ws = XLSX.utils.aoa_to_sheet(wsData);
     const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "Settlement");
-    XLSX.writeFile(wb, `${selectedPartner}_Settlement_${startDate || 'All'}_to_${endDate || 'Time'}.xlsx`);
+    XLSX.utils.book_append_sheet(wb, ws, "Monthly Settlement");
+    XLSX.writeFile(wb, `${selectedPartner}_${scorecard.month}_Settlement.xlsx`);
   };
 
-  // Print as PDF / System Print Dialog
-  const handlePrintPDF = () => {
-    window.print();
-  };
-
-  const periodLabel = startDate || endDate
-    ? `${startDate ? formatDate(startDate) : 'Beginning'} to ${endDate ? formatDate(endDate) : 'Today'}`
-    : 'All Time';
+  // Filter vouchers by search
+  const filteredMonthVouchers = useMemo(() => {
+    if (!currentMonthData) return [];
+    if (!voucherSearch.trim()) return currentMonthData.vouchers;
+    const q = voucherSearch.toLowerCase();
+    return currentMonthData.vouchers.filter(v => 
+      (v.description && v.description.toLowerCase().includes(q)) ||
+      (v.date && v.date.includes(q)) ||
+      String(v.expense).includes(q)
+    );
+  }, [currentMonthData, voucherSearch]);
 
   return (
-    <div>
-      {/* Printable Official Header (Only displays during Print / Save PDF) */}
-      <div className="print-only" style={{ marginBottom: '1.25rem', borderBottom: '2px solid #1e3a8a', paddingBottom: '0.75rem' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+    <div style={{ maxWidth: '1280px', margin: '0 auto', paddingBottom: '3rem' }}>
+      
+      {/* ========================================================================= */}
+      {/* MAIN TOP BAR (PARTNER SELECTOR & REFRESH)                                */}
+      {/* ========================================================================= */}
+      <div className="glass-card no-print" style={{ marginBottom: '1.25rem', padding: '1rem 1.25rem', background: '#ffffff', border: '1px solid #e2e8f0' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem' }}>
           <div>
-            <h1 style={{ fontSize: '1.5rem', fontWeight: 800, color: '#1e3a8a', margin: 0 }}>DKPT TEXTILE & APPARELS</h1>
-            <h2 style={{ fontSize: '1.1rem', color: '#1e293b', margin: '0.2rem 0', fontWeight: 700 }}>
-              Partner Settlement Statement & Payment Summary
-            </h2>
-            <p style={{ fontSize: '0.9rem', color: '#475569', margin: '0.2rem 0' }}>
-              Partner Name: <strong style={{ color: '#0f172a', fontSize: '1rem' }}>{selectedPartner}</strong>
-              <span style={{ marginLeft: '1.5rem' }}>Statement Period: <strong>{periodLabel}</strong></span>
-            </p>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+              <div style={{ width: '38px', height: '38px', borderRadius: '10px', background: 'linear-gradient(135deg, #1e40af 0%, #3b82f6 100%)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff' }}>
+                <Building2 size={20} />
+              </div>
+              <div>
+                <h1 style={{ fontSize: '1.25rem', fontWeight: 800, color: '#0f172a', margin: 0, letterSpacing: '-0.02em' }}>
+                  Partners Settlement & Ledger Statement
+                </h1>
+                <p style={{ fontSize: '0.8rem', color: '#64748b', margin: '0.15rem 0 0 0' }}>
+                  Month-wise zero-carryforward settlement, expense vouchers & remuneration
+                </p>
+              </div>
+            </div>
           </div>
-          <div style={{ textAlign: 'right', fontSize: '0.8rem', color: '#64748b' }}>
-            <p style={{ margin: 0 }}>Printed: {new Date().toLocaleDateString('en-IN')}</p>
-            <p style={{ margin: '0.2rem 0 0 0' }}>Time: {new Date().toLocaleTimeString('en-IN')}</p>
-          </div>
-        </div>
-      </div>
 
-      {/* Screen Page Header */}
-      <header className="page-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem' }}>
-        <div>
-          <h1 className="page-title">Partners Sheet (Payables & Settlement)</h1>
-          <p style={{ color: 'var(--text-muted)', fontSize: '0.825rem', marginTop: '0.2rem' }}>
-            Track partner ledger, expenses, salary, EMI & calculate final payment / excess
-          </p>
-        </div>
-
-        {selectedPartner && (
-          <div style={{ display: 'flex', gap: '0.5rem' }}>
-            <button
-              className="btn btn-secondary"
-              onClick={exportToExcel}
-              disabled={loading}
-              style={{ fontSize: '0.85rem' }}
-              title="Download Excel Spreadsheet"
-            >
-              <Download size={15} style={{ color: 'var(--success)' }} /> Export Excel
-            </button>
-            <button
-              className="btn btn-primary"
-              onClick={handlePrintPDF}
-              disabled={loading}
-              style={{ fontSize: '0.85rem' }}
-              title="Print or Save as PDF"
-            >
-              <Printer size={15} /> Print / Save PDF
-            </button>
-          </div>
-        )}
-      </header>
-
-      {/* Filter Control Bar (no-print) */}
-      <div className="glass-card no-print" style={{ marginBottom: '1.5rem', padding: '1rem' }}>
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '1.25rem', alignItems: 'flex-end', justifyContent: 'space-between' }}>
-          
           {/* Partner Selector */}
-          <div style={{ minWidth: '220px', flex: '1 1 220px' }}>
-            <label className="input-label" style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', marginBottom: '0.35rem' }}>
-              <User size={15} style={{ color: 'var(--accent-primary)' }} /> Select Partner
-            </label>
-            <div style={{ position: 'relative' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', background: '#f8fafc', padding: '0.35rem 0.75rem', borderRadius: '0.5rem', border: '1px solid #cbd5e1' }}>
+              <User size={16} style={{ color: '#2563eb' }} />
+              <label style={{ fontSize: '0.85rem', fontWeight: 600, color: '#334155' }}>Partner:</label>
               <select
-                className="input-field"
                 value={selectedPartner}
-                onChange={(e) => setSelectedPartner(e.target.value)}
-                style={{ width: '100%', padding: '0.45rem 0.6rem', fontWeight: 600, fontSize: '0.95rem', cursor: 'pointer' }}
+                onChange={(e) => {
+                  setSelectedPartner(e.target.value);
+                  setActiveViewMonth(null); // Return to summary when changing partner
+                }}
+                style={{
+                  border: 'none',
+                  background: 'transparent',
+                  fontWeight: 700,
+                  fontSize: '0.95rem',
+                  color: '#1e3a8a',
+                  cursor: 'pointer',
+                  outline: 'none',
+                  padding: '0.2rem 0.4rem'
+                }}
               >
-                <option value="">-- Choose Partner --</option>
-                {uniquePartners.map((p, idx) => (
-                  <option key={idx} value={p}>{p}</option>
+                {uniquePartners.map(p => (
+                  <option key={p} value={p}>{p}</option>
                 ))}
               </select>
             </div>
-          </div>
 
-          {/* Month Wise Selector */}
-          <div style={{ minWidth: '180px', flex: '1 1 180px' }}>
-            <label className="input-label" style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', marginBottom: '0.35rem' }}>
-              <Calendar size={15} style={{ color: 'var(--accent-primary)' }} /> Month Wise
-            </label>
-            <input
-              type="month"
-              className="input-field"
-              value={selectedMonth}
-              onChange={(e) => handleMonthChange(e.target.value)}
-              style={{ width: '100%', padding: '0.45rem 0.6rem', cursor: 'pointer' }}
-            />
-          </div>
-
-          {/* Date Range Selector */}
-          <div style={{ minWidth: '290px', flex: '1 1 290px' }}>
-            <label className="input-label" style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', marginBottom: '0.35rem' }}>
-              <CalendarDays size={15} style={{ color: 'var(--accent-primary)' }} /> Custom Date Range
-            </label>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-              <input
-                type="date"
-                className="input-field"
-                placeholder="From"
-                value={startDate}
-                onChange={(e) => handleStartDateChange(e.target.value)}
-                style={{ width: '100%', padding: '0.45rem 0.6rem' }}
-                title="Start Date"
-              />
-              <span style={{ color: 'var(--text-muted)', fontSize: '0.85rem', fontWeight: 500 }}>to</span>
-              <input
-                type="date"
-                className="input-field"
-                placeholder="To"
-                value={endDate}
-                onChange={(e) => handleEndDateChange(e.target.value)}
-                style={{ width: '100%', padding: '0.45rem 0.6rem' }}
-                title="End Date"
-              />
-            </div>
-          </div>
-
-          {/* Quick Filter Buttons & Clear */}
-          <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap', alignItems: 'center' }}>
             <button
               type="button"
               className="btn btn-secondary"
-              onClick={setThisMonth}
-              style={{ fontSize: '0.8rem', padding: '0.4rem 0.65rem' }}
+              onClick={() => loadPartnerData(selectedPartner)}
+              disabled={loading}
+              style={{ fontSize: '0.8rem', padding: '0.45rem 0.75rem', display: 'flex', alignItems: 'center', gap: '0.35rem' }}
+              title="Refresh Data"
             >
-              This Month
+              <RotateCcw size={14} className={loading ? 'animate-spin' : ''} />
+              <span>{loading ? 'Refreshing...' : 'Refresh'}</span>
             </button>
-            <button
-              type="button"
-              className="btn btn-secondary"
-              onClick={setLastMonth}
-              style={{ fontSize: '0.8rem', padding: '0.4rem 0.65rem' }}
-            >
-              Last Month
-            </button>
-            {(startDate || endDate || selectedMonth) && (
-              <button
-                type="button"
-                className="btn btn-secondary"
-                onClick={clearDates}
-                style={{ fontSize: '0.8rem', padding: '0.4rem 0.65rem', color: 'var(--danger)', borderColor: '#fca5a5' }}
-                title="Clear date filter to view full ledger"
-              >
-                <RotateCcw size={13} style={{ marginRight: '0.2rem' }} /> All Time
-              </button>
-            )}
           </div>
-
         </div>
-
-        {/* Active Filter Period Indicator */}
-        {(startDate || endDate) && (
-          <div style={{ marginTop: '0.85rem', paddingTop: '0.75rem', borderTop: '1px dashed var(--border-color)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.5rem', fontSize: '0.825rem', color: 'var(--accent-primary)' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-              <Filter size={14} />
-              <span>
-                Active Filter Period: <strong>{startDate ? formatDate(startDate) : 'Beginning'}</strong> to <strong>{endDate ? formatDate(endDate) : 'Today'}</strong>
-                {selectedMonth && (
-                  <span style={{ marginLeft: '0.5rem', color: 'var(--text-muted)' }}>
-                    ({new Date(startDate + 'T00:00:00').toLocaleDateString('en-US', { month: 'long', year: 'numeric' })})
-                  </span>
-                )}
-              </span>
-            </div>
-            <span className="badge badge-neutral" style={{ fontSize: '0.75rem' }}>
-              Automatic Filter Active
-            </span>
-          </div>
-        )}
       </div>
 
-      {!selectedPartner ? (
-        <div className="glass-card" style={{ textAlign: 'center', padding: '4rem', color: 'var(--text-secondary)' }}>
-          <Search size={64} style={{ opacity: 0.2, marginBottom: '1.5rem' }} />
-          <h2 style={{ fontSize: '1.25rem', marginBottom: '0.5rem', color: 'var(--text-primary)' }}>No Partner Selected</h2>
-          <p>Please select a partner from the dropdown above to view their ledger statement and settlement summary.</p>
+      {/* Loading & Error States */}
+      {loading && !rawLedgerEntries.length && (
+        <div style={{ textAlign: 'center', padding: '4rem 1rem', color: '#64748b' }}>
+          <RotateCcw size={32} className="animate-spin" style={{ margin: '0 auto 1rem auto', color: '#2563eb' }} />
+          <p style={{ fontWeight: 600 }}>Loading partner records...</p>
         </div>
-      ) : (
+      )}
+
+      {error && (
+        <div style={{ padding: '1rem', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: '0.5rem', color: '#b91c1c', marginBottom: '1.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          <AlertCircle size={18} />
+          <span>{error}</span>
+        </div>
+      )}
+
+      {!loading && selectedPartner && (
         <>
-          {/* ========================================================= */}
-          {/* SECTION 1: PARTNER PAYMENT & SETTLEMENT SUMMARY TABLE     */}
-          {/* ========================================================= */}
-          <div className="glass-card" style={{ marginBottom: '1.75rem', padding: '1.25rem', border: '1px solid #bfdbfe', background: '#ffffff' }}>
-            
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.75rem', marginBottom: '1rem' }}>
-              <div>
-                <h2 style={{ fontSize: '1.15rem', fontWeight: 700, color: 'var(--accent-primary)', display: 'flex', alignItems: 'center', gap: '0.5rem', margin: 0 }}>
-                  <Calculator size={20} /> Partner Payment & Settlement Summary ({selectedPartner})
-                  {effectiveMonth && (
-                    <span className="badge badge-primary" style={{ fontSize: '0.8rem', marginLeft: '0.25rem', background: '#dbeafe', color: '#1e40af', padding: '0.2rem 0.6rem' }}>
-                      📅 {formatMonthName(effectiveMonth)}
-                    </span>
-                  )}
-                </h2>
-                <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', margin: '0.2rem 0 0 0' }}>
-                  Total Expenses + Salary + EMI + Custom Adjustments = Net Balance for Payment / Excess
-                </p>
-              </div>
-
-              {effectiveMonth && (
-                <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }} className="no-print">
-                  <button
-                    type="button"
-                    className="btn btn-primary"
-                    onClick={handleAddRow}
-                    style={{ fontSize: '0.825rem', padding: '0.35rem 0.75rem', display: 'flex', alignItems: 'center', gap: '0.35rem' }}
-                    title="Add new payment or receipt adjustment row"
-                  >
-                    <Plus size={15} /> Add New Row
-                  </button>
-
-                  {isDirty && (
-                    <button
-                      type="button"
-                      className="btn btn-secondary"
-                      onClick={handleDiscardChanges}
-                      style={{
-                        fontSize: '0.825rem',
-                        padding: '0.35rem 0.75rem',
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '0.35rem',
-                        color: '#dc2626',
-                        borderColor: '#fca5a5'
-                      }}
-                      title="Discard unsaved edits and restore last saved state"
-                    >
-                      <RotateCcw size={14} /> Discard
-                    </button>
-                  )}
-
-                  <button
-                    type="button"
-                    className="btn"
-                    onClick={handleSaveSummary}
-                    disabled={!isDirty || savingSummary}
-                    style={{
-                      fontSize: '0.825rem',
-                      padding: '0.35rem 0.85rem',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '0.4rem',
-                      fontWeight: 600,
-                      backgroundColor: isDirty ? '#16a34a' : '#94a3b8',
-                      color: '#ffffff',
-                      border: 'none',
-                      cursor: isDirty && !savingSummary ? 'pointer' : 'not-allowed',
-                      boxShadow: isDirty ? '0 2px 4px rgba(22, 163, 74, 0.3)' : 'none',
-                      transition: 'all 0.2s ease'
-                    }}
-                    title={isDirty ? "Save month changes to database" : "No unsaved changes"}
-                  >
-                    <Save size={15} />
-                    {savingSummary ? 'Saving...' : (isDirty ? 'Save Changes' : 'Saved')}
-                  </button>
-                </div>
-              )}
-            </div>
-
-            {/* Unsaved / Success / Error Alert Messages */}
-            {isDirty && (
-              <div className="no-print" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.55rem 0.85rem', background: '#fffbeb', border: '1px solid #fde68a', borderRadius: '0.375rem', marginBottom: '0.85rem', fontSize: '0.85rem', color: '#92400e' }}>
-                <AlertCircle size={16} style={{ color: '#d97706', flexShrink: 0 }} />
-                <span><strong>Unsaved Changes:</strong> Is mahine me badlaav kiye gaye hain. Database me save karne ke liye upar <strong>"Save Changes"</strong> button dabayein.</span>
-              </div>
-            )}
-
-            {saveSuccessMsg && (
-              <div className="no-print" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.55rem 0.85rem', background: '#f0fdf4', border: '1px solid #86efac', borderRadius: '0.375rem', marginBottom: '0.85rem', fontSize: '0.85rem', color: '#166534' }}>
-                <CheckCircle2 size={16} style={{ color: '#16a34a', flexShrink: 0 }} />
-                <span>{saveSuccessMsg}</span>
-              </div>
-            )}
-
-            {saveErrorMsg && (
-              <div className="no-print" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.55rem 0.85rem', background: '#fef2f2', border: '1px solid #fca5a5', borderRadius: '0.375rem', marginBottom: '0.85rem', fontSize: '0.85rem', color: '#991b1b' }}>
-                <AlertCircle size={16} style={{ color: '#dc2626', flexShrink: 0 }} />
-                <span>{saveErrorMsg}</span>
-              </div>
-            )}
-
-            {!effectiveMonth && (
-              <div className="no-print" style={{ padding: '1.25rem', background: '#f8fafc', borderRadius: '0.375rem', border: '1px dashed #cbd5e1', textAlign: 'center', marginBottom: '1rem' }}>
-                <p style={{ margin: '0 0 0.35rem 0', fontWeight: 600, color: '#334155', fontSize: '0.9rem' }}>
-                  📅 Monthly Salary, Car EMI aur Adjustments mahina-wise (Month-wise) manage aur save hote hain.
-                </p>
-                <p style={{ margin: '0 0 0.75rem 0', fontSize: '0.825rem', color: '#64748b' }}>
-                  Kripya upar filter bar se Mahina chunein ya neeche button dabayein:
-                </p>
-                <button
-                  type="button"
-                  className="btn btn-primary"
-                  onClick={setThisMonth}
-                  style={{ fontSize: '0.825rem', padding: '0.35rem 0.75rem', display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }}
-                >
-                  <CalendarDays size={15} /> Select Current Month ({new Date().toLocaleString('en-IN', { month: 'short', year: 'numeric' })})
-                </button>
-              </div>
-            )}
-
-            {/* Datalist suggestions for common settlement items */}
-            <datalist id="summary-descriptions">
-              <option value="Monthly Salary" />
-              <option value="Car EMI" />
-              <option value="Vehicle Loan EMI" />
-              <option value="Factory / Machinery EMI" />
-              <option value="Personal Loan EMI" />
-              <option value="Partner Remuneration" />
-              <option value="Office Rent Reimbursement" />
-              <option value="Fuel & Travel Allowance" />
-              <option value="Mobile / Utility Bill" />
-              <option value="Cash Advance Paid" />
-              <option value="Bank Transfer Paid" />
-              <option value="Bonus / Incentive" />
-            </datalist>
-
-            {/* Summary Table */}
-            <div className="table-container" style={{ border: '1px solid var(--border-color)', marginBottom: '1rem', borderRadius: '0.35rem' }}>
-              <table>
-                <thead>
-                  <tr style={{ background: '#1e3a8a', color: '#fff' }}>
-                    <th style={{ width: '40%' }}>Description / Item</th>
-                    <th style={{ textAlign: 'right', width: '25%', color: '#fca5a5' }}>
-                      Payment (Payable / देय ₹)
-                    </th>
-                    <th style={{ textAlign: 'right', width: '25%', color: '#86efac' }}>
-                      Receipt (Received / जमा ₹)
-                    </th>
-                    <th style={{ width: '10%', textAlign: 'center' }} className="no-print">Action</th>
-                  </tr>
-                </thead>
-                <tbody>
-
-                  {/* 1. Opening Balance Row (if filtered and opening balance exists) */}
-                  {startDate && openingBalance !== 0 && (
-                    <tr style={{ backgroundColor: 'rgba(59, 130, 246, 0.05)' }}>
-                      <td>
-                        <div style={{ fontWeight: 600, color: 'var(--accent-primary)', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                          <span>Opening Balance (B/F prior to {formatDate(startDate)})</span>
-                          <span className="badge badge-neutral" style={{ fontSize: '0.65rem' }}>Auto</span>
-                        </div>
-                      </td>
-                      <td style={{ textAlign: 'right', fontWeight: 600, color: openingBalance > 0 ? 'var(--danger)' : 'var(--text-muted)' }}>
-                        {openingBalance > 0 ? (
-                          <>
-                            ₹ {openingBalance.toFixed(2)}
-                            <span style={{ fontSize: '0.7rem', color: 'var(--danger)', marginLeft: '0.3rem' }}>(Payable)</span>
-                          </>
-                        ) : '-'}
-                      </td>
-                      <td style={{ textAlign: 'right', fontWeight: 600, color: openingBalance < 0 ? 'var(--success)' : 'var(--text-muted)' }}>
-                        {openingBalance < 0 ? (
-                          <>
-                            ₹ {Math.abs(openingBalance).toFixed(2)}
-                            <span style={{ fontSize: '0.7rem', color: 'var(--success)', marginLeft: '0.3rem' }}>(Advance)</span>
-                          </>
-                        ) : '-'}
-                      </td>
-                      <td style={{ textAlign: 'center', color: 'var(--text-muted)', fontSize: '0.75rem' }} className="no-print">-</td>
-                    </tr>
-                  )}
-
-                  {/* 2. Auto Partner Ledger Total Expenses Row */}
-                  <tr style={{ backgroundColor: '#f8fafc' }}>
-                    <td>
-                      <div style={{ fontWeight: 600, color: 'var(--text-main)', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                        <span>Partner Ledger Expenses (Total Paid by {selectedPartner})</span>
-                        <span className="badge badge-danger" style={{ fontSize: '0.65rem' }}>Ledger</span>
-                      </div>
-                      <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-                        Period: {periodLabel} ({filteredEntries.filter(e => Number(e.expense) > 0).length} entries)
-                      </span>
-                    </td>
-                    <td style={{ textAlign: 'right', fontWeight: 700, color: 'var(--danger)', fontSize: '1rem' }}>
-                      ₹ {periodExpense.toFixed(2)}
-                    </td>
-                    <td style={{ textAlign: 'right', color: 'var(--text-muted)' }}>-</td>
-                    <td style={{ textAlign: 'center', color: 'var(--text-muted)', fontSize: '0.75rem' }} className="no-print">
-                      <span className="badge badge-neutral" style={{ fontSize: '0.65rem' }}>Locked</span>
-                    </td>
-                  </tr>
-
-                  {/* 3. Auto Partner Ledger Receipts / Reimbursed Row (if any) */}
-                  {periodReceipt > 0 && (
-                    <tr style={{ backgroundColor: '#f8fafc' }}>
-                      <td>
-                        <div style={{ fontWeight: 600, color: 'var(--text-main)', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                          <span>Partner Ledger Reimbursements (Already Paid Back)</span>
-                          <span className="badge badge-success" style={{ fontSize: '0.65rem' }}>Ledger</span>
-                        </div>
-                        <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-                          Reimbursed vouchers in this period ({filteredEntries.filter(e => Number(e.receipt) > 0).length} entries)
-                        </span>
-                      </td>
-                      <td style={{ textAlign: 'right', color: 'var(--text-muted)' }}>-</td>
-                      <td style={{ textAlign: 'right', fontWeight: 700, color: 'var(--success)', fontSize: '1rem' }}>
-                        ₹ {periodReceipt.toFixed(2)}
-                      </td>
-                      <td style={{ textAlign: 'center', color: 'var(--text-muted)', fontSize: '0.75rem' }} className="no-print">
-                        <span className="badge badge-neutral" style={{ fontSize: '0.65rem' }}>Locked</span>
-                      </td>
-                    </tr>
-                  )}
-
-                  {/* 4. User-Added Editable Rows (Salary, EMI, Adjustments, etc.) */}
-                  {customRows.map((row, idx) => (
-                    <tr key={row.id}>
-                      <td>
-                        {/* Print view plain text */}
-                        <span className="print-input-text" style={{ fontWeight: 600 }}>
-                          {row.description || `Adjustment #${idx + 1}`}
-                        </span>
-                        {/* Screen view editable text box */}
-                        <div className="print-input-field">
-                          <input
-                            type="text"
-                            list="summary-descriptions"
-                            className="input-field"
-                            placeholder="e.g. Salary, Car EMI, Bonus, Personal Expense..."
-                            value={row.description}
-                            onChange={(e) => handleUpdateRow(row.id, 'description', e.target.value)}
-                            style={{ width: '100%', marginBottom: 0, fontWeight: 500 }}
-                          />
-                        </div>
-                      </td>
-
-                      {/* Payment Amount Input */}
-                      <td style={{ textAlign: 'right' }}>
-                        <span className="print-input-text" style={{ fontWeight: 600, color: '#dc2626' }}>
-                          {Number(row.payment) > 0 ? `₹ ${Number(row.payment).toFixed(2)}` : '-'}
-                        </span>
-                        <div className="print-input-field" style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: '0.25rem' }}>
-                          <span style={{ color: 'var(--danger)', fontWeight: 600, fontSize: '0.85rem' }}>₹</span>
-                          <input
-                            type="number"
-                            className="input-field"
-                            placeholder="0.00"
-                            value={row.payment}
-                            onChange={(e) => handleUpdateRow(row.id, 'payment', e.target.value)}
-                            style={{ width: '140px', textAlign: 'right', marginBottom: 0, color: 'var(--danger)', fontWeight: 600 }}
-                            title="Amount firm has to pay"
-                          />
-                        </div>
-                      </td>
-
-                      {/* Receipt Amount Input */}
-                      <td style={{ textAlign: 'right' }}>
-                        <span className="print-input-text" style={{ fontWeight: 600, color: '#16a34a' }}>
-                          {Number(row.receipt) > 0 ? `₹ ${Number(row.receipt).toFixed(2)}` : '-'}
-                        </span>
-                        <div className="print-input-field" style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: '0.25rem' }}>
-                          <span style={{ color: 'var(--success)', fontWeight: 600, fontSize: '0.85rem' }}>₹</span>
-                          <input
-                            type="number"
-                            className="input-field"
-                            placeholder="0.00"
-                            value={row.receipt}
-                            onChange={(e) => handleUpdateRow(row.id, 'receipt', e.target.value)}
-                            style={{ width: '140px', textAlign: 'right', marginBottom: 0, color: 'var(--success)', fontWeight: 600 }}
-                            title="Amount received / reimbursed"
-                          />
-                        </div>
-                      </td>
-
-                      {/* Delete Button */}
-                      <td style={{ textAlign: 'center' }} className="no-print">
-                        <button
-                          type="button"
-                          onClick={() => handleRemoveRow(row.id)}
-                          className="btn btn-secondary"
-                          style={{ padding: '0.25rem 0.4rem', color: 'var(--danger)', borderColor: '#fecaca' }}
-                          title="Delete row"
-                        >
-                          <Trash2 size={14} />
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-
-                  {/* Empty state prompt for custom rows */}
-                  {effectiveMonth && customRows.length === 0 && (
-                    <tr className="no-print">
-                      <td colSpan="4" style={{ textAlign: 'center', padding: '1rem', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
-                        No additional rows yet for {formatMonthName(effectiveMonth)}. Click <strong>"+ Add New Row"</strong> above to add Salary, EMI, or other adjustments.
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-
-                {/* Summary Table Footer */}
-                <tfoot>
-                  <tr style={{ background: '#f1f5f9', borderTop: '2px solid #cbd5e1' }}>
-                    <td style={{ fontWeight: 800, fontSize: '0.95rem' }}>
-                      Total Settlement Figures
-                    </td>
-                    <td style={{ textAlign: 'right', fontWeight: 800, color: 'var(--danger)', fontSize: '1.05rem' }}>
-                      ₹ {totalPayment.toFixed(2)}
-                    </td>
-                    <td style={{ textAlign: 'right', fontWeight: 800, color: 'var(--success)', fontSize: '1.05rem' }}>
-                      ₹ {totalReceipt.toFixed(2)}
-                    </td>
-                    <td className="no-print"></td>
-                  </tr>
-                </tfoot>
-              </table>
-            </div>
-
-            {/* ========================================================= */}
-            {/* NET BALANCE BANNER (WITH VIBRANT STATUS COLOR)           */}
-            {/* ========================================================= */}
-            <div 
-              style={{
-                borderRadius: '0.5rem',
-                padding: '1rem 1.25rem',
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center',
-                flexWrap: 'wrap',
-                gap: '1rem',
-                background: netBalanceForPayment > 0 
-                  ? 'rgba(239, 68, 68, 0.08)' 
-                  : (netBalanceForPayment < 0 ? 'rgba(16, 185, 129, 0.08)' : 'rgba(59, 130, 246, 0.08)'),
-                border: `2px solid ${
-                  netBalanceForPayment > 0 
-                    ? '#f87171' 
-                    : (netBalanceForPayment < 0 ? '#34d399' : '#93c5fd')
-                }`
-              }}
-            >
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                {netBalanceForPayment > 0 ? (
-                  <AlertCircle size={32} style={{ color: 'var(--danger)', flexShrink: 0 }} />
-                ) : (
-                  <CheckCircle2 size={32} style={{ color: netBalanceForPayment < 0 ? 'var(--success)' : 'var(--accent-primary)', flexShrink: 0 }} />
-                )}
-
-                <div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                    <span style={{ 
-                      fontSize: '1rem', 
-                      fontWeight: 800, 
-                      color: netBalanceForPayment > 0 ? '#b91c1c' : (netBalanceForPayment < 0 ? '#15803d' : '#1d4ed8') 
-                    }}>
-                      {netBalanceForPayment > 0 
-                        ? `BALANCE FOR PAYMENT (कुल देय राशि - फर्म को देनी है)` 
-                        : (netBalanceForPayment < 0 
-                            ? `EXCESS / ADVANCE AMOUNT (अतिरिक्त भुगतान - पार्टनर पर बकाया)` 
-                            : `SETTLEMENT BALANCED (हिसाब पूर्णतः बराबर / शून्य)`
-                          )}
-                    </span>
-                    <span 
-                      className={`badge ${netBalanceForPayment > 0 ? 'badge-danger' : (netBalanceForPayment < 0 ? 'badge-success' : 'badge-neutral')}`}
-                      style={{ fontSize: '0.7rem' }}
-                    >
-                      {netBalanceForPayment > 0 ? 'PAYMENT DUE' : (netBalanceForPayment < 0 ? 'EXCESS PAID' : 'NIL')}
-                    </span>
+          {/* ========================================================================= */}
+          {/* LEVEL 1: EXECUTIVE MASTER MONTHLY SCORECARD (WHEN NO MONTH IS EXPANDED)  */}
+          {/* ========================================================================= */}
+          {activeViewMonth === null ? (
+            <div>
+              {/* Top Executive Summary Cards */}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '1rem', marginBottom: '1.5rem' }}>
+                <div className="glass-card" style={{ padding: '1.15rem', background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '0.75rem' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                    <span style={{ fontSize: '0.8rem', fontWeight: 600, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Total Vouchers</span>
+                    <Receipt size={18} style={{ color: '#6366f1' }} />
                   </div>
+                  <div style={{ fontSize: '1.5rem', fontWeight: 800, color: '#1e293b', marginTop: '0.5rem' }}>
+                    ₹ {overallSummary.vouchers.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                  </div>
+                  <p style={{ fontSize: '0.75rem', color: '#94a3b8', margin: '0.2rem 0 0 0' }}>All months bills paid by partner</p>
+                </div>
 
-                  <p style={{ margin: '0.2rem 0 0 0', fontSize: '0.8rem', color: 'var(--text-muted)' }}>
-                    {netBalanceForPayment > 0 
-                      ? `Calculation: Total Payments (₹ ${totalPayment.toFixed(2)}) minus Total Receipts (₹ ${totalReceipt.toFixed(2)})`
-                      : (netBalanceForPayment < 0 
-                          ? `Total Receipts (₹ ${totalReceipt.toFixed(2)}) exceed Total Payments (₹ ${totalPayment.toFixed(2)})`
-                          : `Total Payments and Receipts are completely equal.`
-                        )}
+                <div className="glass-card" style={{ padding: '1.15rem', background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '0.75rem' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                    <span style={{ fontSize: '0.8rem', fontWeight: 600, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Fixed Remuneration</span>
+                    <Calendar size={18} style={{ color: '#0ea5e9' }} />
+                  </div>
+                  <div style={{ fontSize: '1.5rem', fontWeight: 800, color: '#1e293b', marginTop: '0.5rem' }}>
+                    ₹ {overallSummary.fixed.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                  </div>
+                  <p style={{ fontSize: '0.75rem', color: '#94a3b8', margin: '0.2rem 0 0 0' }}>Salary & Vehicle EMI entitlements</p>
+                </div>
+
+                <div className="glass-card" style={{ padding: '1.15rem', background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '0.75rem' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                    <span style={{ fontSize: '0.8rem', fontWeight: 600, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Total Paid by Company</span>
+                    <CheckCircle2 size={18} style={{ color: '#16a34a' }} />
+                  </div>
+                  <div style={{ fontSize: '1.5rem', fontWeight: 800, color: '#16a34a', marginTop: '0.5rem' }}>
+                    ₹ {overallSummary.paid.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                  </div>
+                  <p style={{ fontSize: '0.75rem', color: '#94a3b8', margin: '0.2rem 0 0 0' }}>Settlements & reimbursements paid</p>
+                </div>
+
+                <div className="glass-card" style={{ padding: '1.15rem', background: overallSummary.pending > 0 ? '#fff1f2' : '#f0fdf4', border: `1px solid ${overallSummary.pending > 0 ? '#fecdd3' : '#bbf7d0'}`, borderRadius: '0.75rem' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                    <span style={{ fontSize: '0.8rem', fontWeight: 700, color: overallSummary.pending > 0 ? '#e11d48' : '#166534', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                      {overallSummary.pending > 0 ? 'Net Pending Dena Hai' : 'All Settled'}
+                    </span>
+                    <AlertCircle size={18} style={{ color: overallSummary.pending > 0 ? '#e11d48' : '#166534' }} />
+                  </div>
+                  <div style={{ fontSize: '1.5rem', fontWeight: 800, color: overallSummary.pending > 0 ? '#e11d48' : '#166534', marginTop: '0.5rem' }}>
+                    ₹ {overallSummary.pending.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                  </div>
+                  <p style={{ fontSize: '0.75rem', color: overallSummary.pending > 0 ? '#fb7185' : '#86efac', margin: '0.2rem 0 0 0' }}>
+                    {overallSummary.pending > 0 ? 'Firm owes partner' : 'No outstanding dues'}
                   </p>
                 </div>
               </div>
 
-              {/* Big Colored Balance Amount */}
-              <div style={{ textAlign: 'right' }}>
-                <div style={{ 
-                  fontSize: '1.75rem', 
-                  fontWeight: 900, 
-                  color: netBalanceForPayment > 0 ? 'var(--danger)' : (netBalanceForPayment < 0 ? 'var(--success)' : 'var(--accent-primary)'),
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '0.25rem',
-                  justifyContent: 'flex-end'
-                }}>
-                  <IndianRupee size={24} /> {Math.abs(netBalanceForPayment).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              {/* Master Scorecard Table */}
+              <div className="glass-card" style={{ padding: '1.25rem', background: '#ffffff', border: '1px solid #cbd5e1', borderRadius: '0.75rem', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.05)' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem', flexWrap: 'wrap', gap: '0.5rem' }}>
+                  <div>
+                    <h2 style={{ fontSize: '1.1rem', fontWeight: 800, color: '#1e3a8a', display: 'flex', alignItems: 'center', gap: '0.5rem', margin: 0 }}>
+                      <TrendingUp size={20} style={{ color: '#2563eb' }} />
+                      Month-by-Month Executive Settlement Scorecard
+                    </h2>
+                    <p style={{ fontSize: '0.8rem', color: '#64748b', margin: '0.2rem 0 0 0' }}>
+                      Zero Carry-Forward: Har mahina bilkul alag aur swatantra hai. Click karke detail dekhein.
+                    </p>
+                  </div>
+
+                  <button
+                    type="button"
+                    className="btn btn-primary"
+                    onClick={() => {
+                      setShowAddPaymentForm(true);
+                      setNewPaymentTargetMonth(availableMonths[0] || '');
+                    }}
+                    style={{ fontSize: '0.825rem', padding: '0.4rem 0.85rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}
+                  >
+                    <Plus size={15} /> Record Payment to Partner
+                  </button>
                 </div>
-                <span style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-muted)' }}>
-                  {netBalanceForPayment > 0 ? 'Net Payable to Partner' : (netBalanceForPayment < 0 ? 'Net Advance to Firm' : 'No Dues')}
-                </span>
-              </div>
-            </div>
 
-          </div>
-
-
-          {/* ========================================================= */}
-          {/* SECTION 2: SUMMARY METRIC CARDS (LEDGER METRICS)          */}
-          {/* ========================================================= */}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1.25rem', marginBottom: '1.5rem' }}>
-            
-            {/* Opening Balance Card (Only visible if filtered with a startDate) */}
-            {startDate ? (
-              <div className="glass-card" style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', borderLeft: '4px solid var(--accent-primary)' }}>
-                <span style={{ color: 'var(--text-secondary)', fontSize: '0.825rem' }}>Opening Balance (B/F)</span>
-                <div style={{ fontSize: '1.4rem', fontWeight: 'bold', color: openingBalance > 0 ? 'var(--danger)' : openingBalance < 0 ? 'var(--success)' : 'inherit', display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
-                  <IndianRupee size={18} /> {Math.abs(openingBalance).toFixed(2)}
-                  {openingBalance > 0 && <span className="badge badge-danger" style={{ fontSize: '0.65rem', marginLeft: '0.35rem' }}>Payable</span>}
-                  {openingBalance < 0 && <span className="badge badge-success" style={{ fontSize: '0.65rem', marginLeft: '0.35rem' }}>Advance</span>}
-                </div>
-                <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Before {formatDate(startDate)}</span>
-              </div>
-            ) : null}
-
-            {/* Expenses Paid Card */}
-            <div className="glass-card" style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', borderLeft: '4px solid var(--danger)' }}>
-              <span style={{ color: 'var(--text-secondary)', fontSize: '0.825rem' }}>
-                {startDate || endDate ? 'Period Paid by' : 'Total Paid by'} {selectedPartner} (Expenses)
-              </span>
-              <div style={{ fontSize: '1.4rem', fontWeight: 'bold', color: 'var(--danger)', display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
-                <IndianRupee size={18} /> {periodExpense.toFixed(2)}
-              </div>
-              <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-                {filteredEntries.filter(e => Number(e.expense) > 0).length} expense entries
-              </span>
-            </div>
-
-            {/* Receipts Reimbursed Card */}
-            <div className="glass-card" style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', borderLeft: '4px solid var(--success)' }}>
-              <span style={{ color: 'var(--text-secondary)', fontSize: '0.825rem' }}>
-                {startDate || endDate ? 'Period Reimbursed' : 'Amount Reimbursed'} (Receipts)
-              </span>
-              <div style={{ fontSize: '1.4rem', fontWeight: 'bold', color: 'var(--success)', display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
-                <IndianRupee size={18} /> {periodReceipt.toFixed(2)}
-              </div>
-              <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-                {filteredEntries.filter(e => Number(e.receipt) > 0).length} receipt entries
-              </span>
-            </div>
-
-            {/* Net Ledger Balance Card */}
-            <div 
-              className="glass-card" 
-              style={{ 
-                display: 'flex', 
-                flexDirection: 'column', 
-                gap: '0.4rem', 
-                background: finalBalance > 0 ? 'rgba(248,81,73,0.06)' : 'rgba(46,160,67,0.06)',
-                borderLeft: `4px solid ${finalBalance > 0 ? 'var(--danger)' : 'var(--success)'}`
-              }}
-            >
-              <span style={{ color: 'var(--text-secondary)', fontSize: '0.825rem' }}>
-                {startDate || endDate ? 'Ledger Closing Balance' : 'Net Amount Payable'} ({selectedPartner})
-              </span>
-              <div style={{ fontSize: '1.4rem', fontWeight: 'bold', color: finalBalance > 0 ? 'var(--danger)' : 'var(--success)', display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
-                <IndianRupee size={18} /> {Math.abs(finalBalance).toFixed(2)}
-                {finalBalance > 0 && <span className="badge badge-danger" style={{ fontSize: '0.65rem', marginLeft: '0.35rem' }}>Payable</span>}
-                {finalBalance < 0 && <span className="badge badge-success" style={{ fontSize: '0.65rem', marginLeft: '0.35rem' }}>Advance</span>}
-              </div>
-              <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-                {finalBalance > 0 ? 'Firm owes partner on ledger' : finalBalance < 0 ? 'Partner received in advance' : 'Ledger fully settled'}
-              </span>
-            </div>
-
-          </div>
-
-
-          {/* ========================================================= */}
-          {/* SECTION 3: DETAILED TRANSACTIONS LEDGER TABLE             */}
-          {/* ========================================================= */}
-          <div className="glass-card" style={{ padding: 0, overflow: 'hidden' }}>
-            <div style={{ padding: '0.85rem 1.25rem', borderBottom: '1px solid var(--border-color)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#f8fafc' }}>
-              <h3 style={{ fontSize: '1rem', fontWeight: 700, margin: 0, color: 'var(--text-main)', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                <Receipt size={17} style={{ color: 'var(--accent-primary)' }} /> Detailed Partner Ledger Transactions
-              </h3>
-              <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
-                Showing {filteredEntries.length} record(s) for {periodLabel}
-              </span>
-            </div>
-
-            {error && (
-              <div style={{ color: 'var(--danger)', padding: '1rem', borderBottom: '1px solid var(--border-color)' }}>
-                {error}
-              </div>
-            )}
-
-            <div className="table-container" style={{ border: 'none', borderRadius: 0 }}>
-              <table>
-                <thead>
-                  <tr>
-                    <th style={{ width: '130px' }}>Date</th>
-                    <th>Description</th>
-                    <th style={{ textAlign: 'right', width: '200px' }}>Expense (Paid by {selectedPartner})</th>
-                    <th style={{ textAlign: 'right', width: '200px' }}>Receipt (Reimbursed)</th>
-                    <th style={{ textAlign: 'right', width: '180px' }}>Balance Payable</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {loading && rawEntries.length === 0 ? (
-                    <tr>
-                      <td colSpan="5" style={{ textAlign: 'center', padding: '2.5rem' }}>
-                        Loading ledger data...
-                      </td>
-                    </tr>
-                  ) : filteredEntries.length === 0 && (!startDate || openingBalance === 0) ? (
-                    <tr>
-                      <td colSpan="5" style={{ textAlign: 'center', padding: '2.5rem', color: 'var(--text-muted)' }}>
-                        No transactions found for {selectedPartner} {startDate || endDate ? 'in this period' : ''}.
-                      </td>
-                    </tr>
-                  ) : (
-                    <>
-                      {/* Opening Balance Row if a start date is specified */}
-                      {startDate && (
-                        <tr style={{ backgroundColor: 'rgba(59, 130, 246, 0.05)', fontWeight: 600 }}>
-                          <td>
-                            <span style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>
-                              As of {formatDate(startDate)}
-                            </span>
-                          </td>
-                          <td>
-                            <span style={{ color: 'var(--accent-primary)', display: 'inline-flex', alignItems: 'center', gap: '0.25rem' }}>
-                              Opening Balance (B/F)
-                            </span>
-                          </td>
-                          <td style={{ textAlign: 'right', color: 'var(--text-muted)' }}>-</td>
-                          <td style={{ textAlign: 'right', color: 'var(--text-muted)' }}>-</td>
-                          <td style={{ textAlign: 'right', fontWeight: 'bold', color: openingBalance > 0 ? 'var(--danger)' : (openingBalance < 0 ? 'var(--success)' : 'inherit') }}>
-                            {Math.abs(openingBalance).toFixed(2)} {openingBalance < 0 ? '(Adv)' : ''}
-                          </td>
-                        </tr>
-                      )}
-
-                      {/* Filtered Transactions */}
-                      {filteredEntries.map(entry => {
-                        const formattedDate = formatDate(entry.date);
-                        const exp = Number(entry.expense) || 0;
-                        const rec = Number(entry.receipt) || 0;
-                        const bal = entry.calculatedBalance;
-                        
+                <div className="table-container" style={{ border: '1px solid #e2e8f0', borderRadius: '0.5rem', overflow: 'hidden' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
+                    <thead>
+                      <tr style={{ background: '#1e3a8a', color: '#ffffff' }}>
+                        <th style={{ padding: '0.75rem 1rem', fontWeight: 700, fontSize: '0.85rem' }}>Mahina (Month)</th>
+                        <th style={{ padding: '0.75rem 1rem', textAlign: 'right', fontWeight: 700, fontSize: '0.85rem' }}>Vouchers (Expenses ₹)</th>
+                        <th style={{ padding: '0.75rem 1rem', textAlign: 'right', fontWeight: 700, fontSize: '0.85rem' }}>Fixed (Salary + EMI ₹)</th>
+                        <th style={{ padding: '0.75rem 1rem', textAlign: 'right', fontWeight: 700, fontSize: '0.85rem', background: '#172554' }}>Total Banta Tha (Payable ₹)</th>
+                        <th style={{ padding: '0.75rem 1rem', textAlign: 'right', fontWeight: 700, fontSize: '0.85rem', color: '#86efac' }}>Company Ne Diya (Paid ₹)</th>
+                        <th style={{ padding: '0.75rem 1rem', textAlign: 'center', fontWeight: 700, fontSize: '0.85rem' }}>Status</th>
+                        <th style={{ padding: '0.75rem 1rem', textAlign: 'center', fontWeight: 700, fontSize: '0.85rem' }}>Action</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {monthlyScorecards.map((sc, idx) => {
+                        const isEven = idx % 2 === 0;
                         return (
-                          <tr key={entry.id}>
-                            <td>{formattedDate}</td>
-                            <td>{entry.description || '-'}</td>
-                            <td style={{ textAlign: 'right', color: exp > 0 ? 'var(--danger)' : 'inherit' }}>
-                              {exp > 0 ? exp.toFixed(2) : '-'}
+                          <tr
+                            key={sc.month}
+                            onClick={() => setActiveViewMonth(sc.month)}
+                            style={{
+                              background: isEven ? '#ffffff' : '#f8fafc',
+                              borderBottom: '1px solid #e2e8f0',
+                              cursor: 'pointer',
+                              transition: 'background 0.15s ease'
+                            }}
+                            onMouseEnter={(e) => e.currentTarget.style.background = '#f1f5f9'}
+                            onMouseLeave={(e) => e.currentTarget.style.background = isEven ? '#ffffff' : '#f8fafc'}
+                          >
+                            <td style={{ padding: '0.85rem 1rem', fontWeight: 700, color: '#0f172a' }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                <CalendarDays size={16} style={{ color: '#2563eb' }} />
+                                <span>{sc.monthName}</span>
+                              </div>
                             </td>
-                            <td style={{ textAlign: 'right', color: rec > 0 ? 'var(--success)' : 'inherit' }}>
-                              {rec > 0 ? rec.toFixed(2) : '-'}
+
+                            <td style={{ padding: '0.85rem 1rem', textAlign: 'right', fontWeight: 600, color: '#475569' }}>
+                              ₹ {sc.voucherTotal.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                              <div style={{ fontSize: '0.7rem', color: '#94a3b8' }}>{sc.voucherCount} vouchers</div>
                             </td>
-                            <td style={{ textAlign: 'right', fontWeight: 'bold', color: bal > 0 ? 'var(--danger)' : (bal < 0 ? 'var(--success)' : 'inherit') }}>
-                              {Math.abs(bal).toFixed(2)} {bal < 0 ? '(Adv)' : ''}
+
+                            <td style={{ padding: '0.85rem 1rem', textAlign: 'right', fontWeight: 600, color: '#0284c7' }}>
+                              {sc.fixedTotal > 0 ? `₹ ${sc.fixedTotal.toLocaleString('en-IN', { maximumFractionDigits: 2 })}` : '-'}
+                            </td>
+
+                            <td style={{ padding: '0.85rem 1rem', textAlign: 'right', fontWeight: 800, color: '#1e3a8a', fontSize: '0.95rem' }}>
+                              ₹ {sc.totalPayable.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                            </td>
+
+                            <td style={{ padding: '0.85rem 1rem', textAlign: 'right', fontWeight: 700, color: '#16a34a', fontSize: '0.95rem' }}>
+                              {sc.totalPaid > 0 ? `₹ ${sc.totalPaid.toLocaleString('en-IN', { maximumFractionDigits: 2 })}` : '-'}
+                            </td>
+
+                            <td style={{ padding: '0.85rem 1rem', textAlign: 'center' }}>
+                              {sc.status === 'settled' && (
+                                <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem', padding: '0.25rem 0.65rem', borderRadius: '1rem', background: '#dcfce7', color: '#15803d', fontSize: '0.75rem', fontWeight: 700 }}>
+                                  <CheckCircle2 size={13} /> Clear (Settled)
+                                </span>
+                              )}
+                              {sc.status === 'pending' && (
+                                <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem', padding: '0.25rem 0.65rem', borderRadius: '1rem', background: '#fee2e2', color: '#b91c1c', fontSize: '0.75rem', fontWeight: 700 }}>
+                                  <Clock size={13} /> ₹ {sc.netBalance.toLocaleString('en-IN', { maximumFractionDigits: 2 })} Dena Hai
+                                </span>
+                              )}
+                              {sc.status === 'advance' && (
+                                <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem', padding: '0.25rem 0.65rem', borderRadius: '1rem', background: '#e0f2fe', color: '#0369a1', fontSize: '0.75rem', fontWeight: 700 }}>
+                                  Advance ₹ {Math.abs(sc.netBalance).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                                </span>
+                              )}
+                            </td>
+
+                            <td style={{ padding: '0.85rem 1rem', textAlign: 'center' }}>
+                              <button
+                                type="button"
+                                className="btn btn-secondary"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setActiveViewMonth(sc.month);
+                                }}
+                                style={{ fontSize: '0.75rem', padding: '0.3rem 0.65rem', display: 'inline-flex', alignItems: 'center', gap: '0.3rem', color: '#2563eb', fontWeight: 600 }}
+                              >
+                                <span>View & Settle</span>
+                                <ChevronRight size={13} />
+                              </button>
                             </td>
                           </tr>
                         );
                       })}
-                    </>
-                  )}
-                </tbody>
-
-                {/* Table Footer with Period Totals */}
-                {filteredEntries.length > 0 && (
-                  <tfoot>
-                    <tr>
-                      <td style={{ fontWeight: 'bold' }}>Period Total</td>
-                      <td style={{ fontWeight: 600 }}>{filteredEntries.length} transaction(s)</td>
-                      <td style={{ textAlign: 'right', fontWeight: 'bold' }}>₹ {periodExpense.toFixed(2)}</td>
-                      <td style={{ textAlign: 'right', fontWeight: 'bold' }}>₹ {periodReceipt.toFixed(2)}</td>
-                      <td style={{ textAlign: 'right', fontWeight: 'bold' }}>
-                        ₹ {Math.abs(finalBalance).toFixed(2)} {finalBalance < 0 ? '(Adv)' : ''}
-                      </td>
-                    </tr>
-                  </tfoot>
-                )}
-              </table>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
             </div>
-          </div>
+          ) : (
+            /* ========================================================================= */
+            /* LEVEL 2: DETAILED MONTH WORKSTATION (CLEAN & NON-HOCHPOCH)               */
+            /* ========================================================================= */
+            currentMonthData && (
+              <div>
+                {/* Official Letterhead Header for Print / PDF */}
+                <div className="print-only" style={{ marginBottom: '1.25rem', borderBottom: '2px solid #0f172a', paddingBottom: '0.75rem' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                    <div>
+                      <h1 style={{ fontSize: '1.4rem', fontWeight: 900, color: '#0f172a', margin: 0 }}>DKPT TEXTILE & APPARELS</h1>
+                      <h2 style={{ fontSize: '1.05rem', fontWeight: 700, color: '#334155', margin: '0.2rem 0 0 0' }}>
+                        Partner Monthly Settlement Statement
+                      </h2>
+                      <p style={{ fontSize: '0.85rem', color: '#475569', margin: '0.25rem 0 0 0' }}>
+                        Partner Name: <strong>{selectedPartner}</strong> | Settlement Month: <strong>{currentMonthData.monthName} ({currentMonthData.month})</strong>
+                      </p>
+                    </div>
+                    <div style={{ textAlign: 'right', fontSize: '0.8rem', color: '#64748b' }}>
+                      <p style={{ margin: 0 }}>Date: {new Date().toLocaleDateString('en-IN')}</p>
+                      <p style={{ margin: '0.2rem 0 0 0' }}>Time: {new Date().toLocaleTimeString('en-IN')}</p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Back button & Month Title Bar */}
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem', marginBottom: '1.25rem' }} className="no-print">
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                    <button
+                      type="button"
+                      className="btn btn-secondary"
+                      onClick={() => setActiveViewMonth(null)}
+                      style={{ fontSize: '0.85rem', padding: '0.45rem 0.85rem', display: 'flex', alignItems: 'center', gap: '0.4rem', fontWeight: 600 }}
+                    >
+                      <ArrowLeft size={16} /> All Months
+                    </button>
+                    <div>
+                      <h2 style={{ fontSize: '1.35rem', fontWeight: 800, color: '#0f172a', margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                        <span>{currentMonthData.monthName} Settlement</span>
+                        <span style={{ fontSize: '0.85rem', fontWeight: 600, color: '#64748b' }}>({selectedPartner})</span>
+                      </h2>
+                      <p style={{ fontSize: '0.8rem', color: '#64748b', margin: '0.15rem 0 0 0' }}>
+                        Zero-carryforward: Is mahine ka hisaab bilkul swatantra hai.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }} className="no-print">
+                    <button
+                      type="button"
+                      className="btn btn-secondary"
+                      onClick={() => exportMonthToExcel(currentMonthData)}
+                      style={{ fontSize: '0.8rem', padding: '0.4rem 0.75rem', display: 'flex', alignItems: 'center', gap: '0.35rem' }}
+                      title="Export Excel for this Month"
+                    >
+                      <Download size={14} style={{ color: '#16a34a' }} /> Export Excel
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-secondary"
+                      onClick={() => window.print()}
+                      style={{ fontSize: '0.8rem', padding: '0.4rem 0.75rem', display: 'flex', alignItems: 'center', gap: '0.35rem' }}
+                    >
+                      <Printer size={14} /> Print
+                    </button>
+                  </div>
+                </div>
+
+                {/* 3 Top Summary Cards for this Month */}
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '1rem', marginBottom: '1.5rem' }}>
+                  <div style={{ padding: '1rem', background: '#f0fdf4', borderRadius: '0.75rem', border: '1px solid #bbf7d0' }}>
+                    <span style={{ fontSize: '0.75rem', fontWeight: 700, color: '#15803d', textTransform: 'uppercase' }}>Box 1: Fixed Entitlements</span>
+                    <div style={{ fontSize: '1.4rem', fontWeight: 800, color: '#15803d', marginTop: '0.35rem' }}>
+                      ₹ {currentMonthData.fixedTotal.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                    </div>
+                    <div style={{ fontSize: '0.75rem', color: '#166534', marginTop: '0.15rem' }}>Salary, Car EMI etc.</div>
+                  </div>
+
+                  <div style={{ padding: '1rem', background: '#f8fafc', borderRadius: '0.75rem', border: '1px solid #cbd5e1' }}>
+                    <span style={{ fontSize: '0.75rem', fontWeight: 700, color: '#475569', textTransform: 'uppercase' }}>Box 2: Vouchers Reimbursement</span>
+                    <div style={{ fontSize: '1.4rem', fontWeight: 800, color: '#1e293b', marginTop: '0.35rem' }}>
+                      ₹ {currentMonthData.voucherTotal.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                    </div>
+                    <div style={{ fontSize: '0.75rem', color: '#64748b', marginTop: '0.15rem' }}>{currentMonthData.voucherCount} out-of-pocket bills</div>
+                  </div>
+
+                  <div style={{ padding: '1rem', background: currentMonthData.netBalance > 0 ? '#fff1f2' : '#f0fdf4', borderRadius: '0.75rem', border: `1px solid ${currentMonthData.netBalance > 0 ? '#fecdd3' : '#bbf7d0'}` }}>
+                    <span style={{ fontSize: '0.75rem', fontWeight: 700, color: currentMonthData.netBalance > 0 ? '#e11d48' : '#15803d', textTransform: 'uppercase' }}>
+                      {currentMonthData.netBalance > 0 ? 'Net Pending Dena Hai' : 'Full Month Settled'}
+                    </span>
+                    <div style={{ fontSize: '1.4rem', fontWeight: 800, color: currentMonthData.netBalance > 0 ? '#e11d48' : '#15803d', marginTop: '0.35rem' }}>
+                      ₹ {Math.abs(currentMonthData.netBalance).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                    </div>
+                    <div style={{ fontSize: '0.75rem', color: currentMonthData.netBalance > 0 ? '#be123c' : '#15803d', marginTop: '0.15rem' }}>
+                      Paid: ₹{currentMonthData.totalPaid.toLocaleString('en-IN')} of ₹{currentMonthData.totalPayable.toLocaleString('en-IN')}
+                    </div>
+                  </div>
+                </div>
+
+                {/* ============================================================= */}
+                {/* BOX 1: FIXED MONTHLY ENTITLEMENTS (SALARY & CAR EMI)         */}
+                {/* ============================================================= */}
+                <div className="glass-card" style={{ marginBottom: '1.5rem', padding: '1.25rem', background: '#ffffff', border: '1px solid #cbd5e1', borderRadius: '0.75rem' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem', flexWrap: 'wrap', gap: '0.5rem' }}>
+                    <div>
+                      <h3 style={{ fontSize: '1rem', fontWeight: 800, color: '#1e40af', margin: 0, display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                        <Calendar size={18} />
+                        1. Fixed Monthly Entitlements (Salary & Car EMI)
+                      </h3>
+                      <p style={{ fontSize: '0.78rem', color: '#64748b', margin: '0.15rem 0 0 0' }}>
+                        Har mahine ke fixed kharche jo partner ko company se lene hote hain
+                      </p>
+                    </div>
+
+                    <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }} className="no-print">
+                      {monthFixedRows.length === 0 || monthFixedRows.every(r => !r.payment) ? (
+                        <button
+                          type="button"
+                          className="btn btn-secondary"
+                          onClick={handleAutoFillFromPrevious}
+                          style={{ fontSize: '0.75rem', padding: '0.35rem 0.65rem', display: 'flex', alignItems: 'center', gap: '0.3rem', color: '#0369a1' }}
+                          title="Copy Salary and EMI from last saved month"
+                        >
+                          <Sparkles size={13} /> Auto-fill from Previous Month
+                        </button>
+                      ) : null}
+
+                      <button
+                        type="button"
+                        className="btn btn-primary"
+                        onClick={handleAddFixedRow}
+                        style={{ fontSize: '0.75rem', padding: '0.35rem 0.65rem', display: 'flex', alignItems: 'center', gap: '0.3rem' }}
+                      >
+                        <Plus size={13} /> Add Fixed Row
+                      </button>
+
+                      {isFixedDirty && (
+                        <button
+                          type="button"
+                          className="btn btn-secondary"
+                          onClick={handleDiscardFixedEdits}
+                          style={{ fontSize: '0.75rem', padding: '0.35rem 0.65rem', color: '#dc2626', borderColor: '#fca5a5' }}
+                        >
+                          Discard
+                        </button>
+                      )}
+
+                      <button
+                        type="button"
+                        className="btn"
+                        onClick={handleSaveFixedRows}
+                        disabled={!isFixedDirty || savingFixed}
+                        style={{
+                          fontSize: '0.75rem',
+                          padding: '0.35rem 0.75rem',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '0.35rem',
+                          fontWeight: 700,
+                          backgroundColor: isFixedDirty ? '#16a34a' : '#94a3b8',
+                          color: '#ffffff',
+                          border: 'none',
+                          cursor: isFixedDirty && !savingFixed ? 'pointer' : 'not-allowed'
+                        }}
+                      >
+                        <Save size={13} />
+                        {savingFixed ? 'Saving...' : (isFixedDirty ? 'Save Fixed Details' : 'Saved')}
+                      </button>
+                    </div>
+                  </div>
+
+                  {isFixedDirty && (
+                    <div style={{ padding: '0.4rem 0.75rem', background: '#fef3c7', border: '1px solid #fde047', borderRadius: '0.35rem', marginBottom: '0.75rem', fontSize: '0.8rem', color: '#92400e', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                      <AlertCircle size={14} />
+                      <span><strong>Unsaved Changes:</strong> Is mahine ki salary/EMI me badlaav kiya gaya hai. Save karne ke liye <strong>"Save Fixed Details"</strong> dabayein.</span>
+                    </div>
+                  )}
+
+                  {fixedSuccessMsg && (
+                    <div style={{ padding: '0.4rem 0.75rem', background: '#dcfce7', border: '1px solid #86efac', borderRadius: '0.35rem', marginBottom: '0.75rem', fontSize: '0.8rem', color: '#166534', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                      <CheckCircle2 size={14} />
+                      <span>{fixedSuccessMsg}</span>
+                    </div>
+                  )}
+
+                  <div className="table-container" style={{ border: '1px solid #e2e8f0', borderRadius: '0.35rem' }}>
+                    <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                      <thead>
+                        <tr style={{ background: '#f8fafc', borderBottom: '1px solid #e2e8f0' }}>
+                          <th style={{ padding: '0.5rem 0.75rem', fontSize: '0.8rem', width: '50%' }}>Description / Item</th>
+                          <th style={{ padding: '0.5rem 0.75rem', fontSize: '0.8rem', textAlign: 'right', width: '35%', color: '#b91c1c' }}>Amount Payable (₹ Company Dena)</th>
+                          <th style={{ padding: '0.5rem 0.75rem', fontSize: '0.8rem', textAlign: 'center', width: '15%' }} className="no-print">Action</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {monthFixedRows.map((row, idx) => (
+                          <tr key={row.id} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                            <td style={{ padding: '0.45rem 0.75rem' }}>
+                              <input
+                                type="text"
+                                className="input-field"
+                                placeholder="e.g. Monthly Salary, Car EMI, Rent..."
+                                value={row.description}
+                                onChange={(e) => handleUpdateFixedRow(row.id, 'description', e.target.value)}
+                                style={{ width: '100%', marginBottom: 0, fontSize: '0.85rem', fontWeight: 600 }}
+                              />
+                            </td>
+                            <td style={{ padding: '0.45rem 0.75rem', textAlign: 'right' }}>
+                              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '0.25rem' }}>
+                                <span style={{ color: '#b91c1c', fontWeight: 600, fontSize: '0.85rem' }}>₹</span>
+                                <input
+                                  type="number"
+                                  className="input-field"
+                                  placeholder="0.00"
+                                  value={row.payment}
+                                  onChange={(e) => handleUpdateFixedRow(row.id, 'payment', e.target.value)}
+                                  style={{ width: '130px', textAlign: 'right', marginBottom: 0, fontWeight: 700, color: '#b91c1c', fontSize: '0.85rem' }}
+                                />
+                              </div>
+                            </td>
+                            <td style={{ padding: '0.45rem 0.75rem', textAlign: 'center' }} className="no-print">
+                              <button
+                                type="button"
+                                onClick={() => handleRemoveFixedRow(row.id)}
+                                style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: '#ef4444', padding: '0.2rem' }}
+                                title="Delete row"
+                              >
+                                <Trash2 size={14} />
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                      <tfoot>
+                        <tr style={{ background: '#f8fafc', fontWeight: 800 }}>
+                          <td style={{ padding: '0.6rem 0.75rem', fontSize: '0.85rem', color: '#1e3a8a' }}>
+                            Subtotal Fixed Entitlements
+                          </td>
+                          <td style={{ padding: '0.6rem 0.75rem', textAlign: 'right', color: '#b91c1c', fontSize: '0.95rem' }}>
+                            ₹ {monthFixedRows.reduce((s, r) => s + (Number(r.payment) || 0), 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                          </td>
+                          <td className="no-print"></td>
+                        </tr>
+                      </tfoot>
+                    </table>
+                  </div>
+                </div>
+
+                {/* ============================================================= */}
+                {/* BOX 2: OUT-OF-POCKET EXPENSES (BILLS / VOUCHERS)             */}
+                {/* ============================================================= */}
+                <div className="glass-card" style={{ marginBottom: '1.5rem', padding: '1.25rem', background: '#ffffff', border: '1px solid #cbd5e1', borderRadius: '0.75rem' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem', flexWrap: 'wrap', gap: '0.5rem' }}>
+                    <div>
+                      <h3 style={{ fontSize: '1rem', fontWeight: 800, color: '#1e40af', margin: 0, display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                        <Receipt size={18} />
+                        2. Out-of-Pocket Expenses (Vouchers / Reimbursement)
+                      </h3>
+                      <p style={{ fontSize: '0.78rem', color: '#64748b', margin: '0.15rem 0 0 0' }}>
+                        Partner ne company ke kaam ke liye apni jeb se jo kharche kiye jo wapas lene hain
+                      </p>
+                    </div>
+
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                      <span style={{ fontSize: '0.85rem', fontWeight: 800, color: '#1e293b', background: '#f1f5f9', padding: '0.25rem 0.6rem', borderRadius: '0.4rem' }}>
+                        Total: ₹ {currentMonthData.voucherTotal.toLocaleString('en-IN', { maximumFractionDigits: 2 })} ({currentMonthData.voucherCount} bills)
+                      </span>
+                      <div style={{ position: 'relative' }} className="no-print">
+                        <Search size={14} style={{ position: 'absolute', left: '0.6rem', top: '50%', transform: 'translateY(-50%)', color: '#94a3b8' }} />
+                        <input
+                          type="text"
+                          placeholder="Search vouchers..."
+                          value={voucherSearch}
+                          onChange={(e) => setVoucherSearch(e.target.value)}
+                          style={{ padding: '0.3rem 0.6rem 0.3rem 1.8rem', fontSize: '0.8rem', border: '1px solid #cbd5e1', borderRadius: '0.35rem', outline: 'none', width: '160px' }}
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="table-container voucher-table-scroll" style={{ border: '1px solid #e2e8f0', borderRadius: '0.35rem' }}>
+                    <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                      <thead style={{ background: '#f8fafc' }}>
+                        <tr style={{ borderBottom: '1px solid #e2e8f0' }}>
+                          <th style={{ padding: '0.5rem 0.75rem', fontSize: '0.8rem', width: '15%' }}>Date</th>
+                          <th style={{ padding: '0.5rem 0.75rem', fontSize: '0.8rem', width: '65%' }}>Description / Expense Head</th>
+                          <th style={{ padding: '0.5rem 0.75rem', fontSize: '0.8rem', textAlign: 'right', width: '20%' }}>Amount (₹)</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {filteredMonthVouchers.length === 0 ? (
+                          <tr>
+                            <td colSpan="3" style={{ textAlign: 'center', padding: '1.5rem', color: '#94a3b8', fontSize: '0.85rem' }}>
+                              No expense vouchers found for this month.
+                            </td>
+                          </tr>
+                        ) : (
+                          filteredMonthVouchers.map((v, i) => (
+                            <tr key={v.id || i} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                              <td style={{ padding: '0.45rem 0.75rem', fontSize: '0.8rem', color: '#475569', fontWeight: 600 }}>
+                                {formatDate(v.date)}
+                              </td>
+                              <td style={{ padding: '0.45rem 0.75rem', fontSize: '0.85rem', color: '#1e293b' }}>
+                                {v.description || '-'}
+                              </td>
+                              <td style={{ padding: '0.45rem 0.75rem', textAlign: 'right', fontWeight: 700, color: '#b91c1c', fontSize: '0.85rem' }}>
+                                ₹ {Number(v.expense).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                              </td>
+                            </tr>
+                          ))
+                        )}
+                      </tbody>
+                      <tfoot style={{ background: '#f8fafc', fontWeight: 800 }}>
+                        <tr style={{ borderTop: '2px solid #cbd5e1' }}>
+                          <td colSpan="2" style={{ padding: '0.6rem 0.75rem', fontSize: '0.85rem', color: '#1e3a8a' }}>
+                            Subtotal Out-of-Pocket Vouchers ({filteredMonthVouchers.length} shown)
+                          </td>
+                          <td style={{ padding: '0.6rem 0.75rem', textAlign: 'right', color: '#b91c1c', fontSize: '0.95rem' }}>
+                            ₹ {filteredMonthVouchers.reduce((s, r) => s + (Number(r.expense) || 0), 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                          </td>
+                        </tr>
+                      </tfoot>
+                    </table>
+                  </div>
+                </div>
+
+                {/* ============================================================= */}
+                {/* BOX 3: PAYMENTS MADE BY COMPANY (SETTLEMENTS / REIMBURSEMENTS) */}
+                {/* ============================================================= */}
+                <div className="glass-card" style={{ marginBottom: '1.5rem', padding: '1.25rem', background: '#ffffff', border: '1px solid #cbd5e1', borderRadius: '0.75rem' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem', flexWrap: 'wrap', gap: '0.5rem' }}>
+                    <div>
+                      <h3 style={{ fontSize: '1rem', fontWeight: 800, color: '#166534', margin: 0, display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                        <CreditCard size={18} />
+                        3. Payments Made by Company (Company Ne Kab-Kab Diya)
+                      </h3>
+                      <p style={{ fontSize: '0.78rem', color: '#64748b', margin: '0.15rem 0 0 0' }}>
+                        Is mahine ke hisaab ke against company ne jo paise chukaye (paid back)
+                      </p>
+                    </div>
+
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }} className="no-print">
+                      <span style={{ fontSize: '0.85rem', fontWeight: 800, color: '#166534', background: '#dcfce7', padding: '0.25rem 0.6rem', borderRadius: '0.4rem' }}>
+                        Total Paid: ₹ {currentMonthData.totalPaid.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                      </span>
+                      <button
+                        type="button"
+                        className="btn btn-primary"
+                        onClick={() => {
+                          setShowAddPaymentForm(true);
+                          setNewPaymentTargetMonth(activeViewMonth);
+                        }}
+                        style={{ fontSize: '0.75rem', padding: '0.35rem 0.65rem', display: 'flex', alignItems: 'center', gap: '0.3rem', background: '#16a34a', borderColor: '#16a34a' }}
+                      >
+                        <Plus size={13} /> Record Payment
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="table-container" style={{ border: '1px solid #e2e8f0', borderRadius: '0.35rem' }}>
+                    <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                      <thead>
+                        <tr style={{ background: '#f8fafc', borderBottom: '1px solid #e2e8f0' }}>
+                          <th style={{ padding: '0.5rem 0.75rem', fontSize: '0.8rem', width: '20%' }}>Payment Date (Kab Diya)</th>
+                          <th style={{ padding: '0.5rem 0.75rem', fontSize: '0.8rem', width: '45%' }}>Mode / Bank Details / Remarks</th>
+                          <th style={{ padding: '0.5rem 0.75rem', fontSize: '0.8rem', width: '20%' }} className="no-print">Target Month</th>
+                          <th style={{ padding: '0.5rem 0.75rem', fontSize: '0.8rem', textAlign: 'right', width: '15%', color: '#16a34a' }}>Amount Paid (₹)</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {currentMonthData.payments.length === 0 ? (
+                          <tr>
+                            <td colSpan="4" style={{ textAlign: 'center', padding: '1.25rem', color: '#94a3b8', fontSize: '0.85rem' }}>
+                              No payments recorded for this month yet. Click <strong>"+ Record Payment"</strong> above when company pays.
+                            </td>
+                          </tr>
+                        ) : (
+                          currentMonthData.payments.map((p, i) => (
+                            <tr key={p.id || i} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                              <td style={{ padding: '0.5rem 0.75rem', fontSize: '0.85rem', fontWeight: 600, color: '#334155' }}>
+                                {formatDate(p.date)}
+                              </td>
+                              <td style={{ padding: '0.5rem 0.75rem', fontSize: '0.85rem', color: '#1e293b' }}>
+                                {p.description}
+                              </td>
+                              <td style={{ padding: '0.5rem 0.75rem', fontSize: '0.8rem' }} className="no-print">
+                                {p.source === 'ledger' ? (
+                                  <select
+                                    value={paymentTargetMap[p.id] || activeViewMonth}
+                                    onChange={(e) => savePaymentTargetMapping(p.id, e.target.value)}
+                                    style={{ fontSize: '0.75rem', padding: '0.2rem 0.4rem', borderRadius: '0.3rem', border: '1px solid #cbd5e1', color: '#1e40af', fontWeight: 600 }}
+                                    title="Assign this payment to another settlement month"
+                                  >
+                                    {availableMonths.map(m => (
+                                      <option key={m} value={m}>{formatMonthName(m)}</option>
+                                    ))}
+                                  </select>
+                                ) : (
+                                  <span className="badge badge-neutral" style={{ fontSize: '0.7rem' }}>Direct Month Record</span>
+                                )}
+                              </td>
+                              <td style={{ padding: '0.5rem 0.75rem', textAlign: 'right', fontWeight: 700, color: '#16a34a', fontSize: '0.9rem' }}>
+                                ₹ {p.amount.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                              </td>
+                            </tr>
+                          ))
+                        )}
+                      </tbody>
+                      <tfoot>
+                        <tr style={{ background: '#f8fafc', fontWeight: 800 }}>
+                          <td colSpan="3" style={{ padding: '0.6rem 0.75rem', fontSize: '0.85rem', color: '#166534' }}>
+                            Subtotal Payments Paid for {currentMonthData.monthName}
+                          </td>
+                          <td style={{ padding: '0.6rem 0.75rem', textAlign: 'right', color: '#16a34a', fontSize: '1rem' }}>
+                            ₹ {currentMonthData.totalPaid.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                          </td>
+                        </tr>
+                      </tfoot>
+                    </table>
+                  </div>
+                </div>
+
+                {/* ============================================================= */}
+                {/* FINAL SETTLEMENT STATUS BANNER FOR THIS MONTH               */}
+                {/* ============================================================= */}
+                <div className="settlement-banner" style={{
+                  padding: '1.25rem 1.5rem',
+                  borderRadius: '0.75rem',
+                  background: currentMonthData.netBalance > 0 ? '#fff1f2' : (currentMonthData.netBalance === 0 ? '#f0fdf4' : '#f0f9ff'),
+                  border: `2px solid ${currentMonthData.netBalance > 0 ? '#f43f5e' : (currentMonthData.netBalance === 0 ? '#22c55e' : '#38bdf8')}`,
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  flexWrap: 'wrap',
+                  gap: '1rem',
+                  breakInside: 'avoid',
+                  pageBreakInside: 'avoid'
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                    {currentMonthData.netBalance === 0 ? (
+                      <CheckCircle2 size={36} style={{ color: '#16a34a', flexShrink: 0 }} />
+                    ) : (
+                      <AlertCircle size={36} style={{ color: currentMonthData.netBalance > 0 ? '#e11d48' : '#0284c7', flexShrink: 0 }} />
+                    )}
+                    <div>
+                      <h4 style={{ fontSize: '1.15rem', fontWeight: 800, color: '#0f172a', margin: 0 }}>
+                        {currentMonthData.netBalance === 0 && '🟢 Month Fully Settled (Hisaab Nill)'}
+                        {currentMonthData.netBalance > 0 && `🔴 Net Pending: ₹ ${currentMonthData.netBalance.toLocaleString('en-IN', { maximumFractionDigits: 2 })} Company Ko Dena Hai`}
+                        {currentMonthData.netBalance < 0 && `🔵 Net Advance: ₹ ${Math.abs(currentMonthData.netBalance).toLocaleString('en-IN', { maximumFractionDigits: 2 })} Excess Paid`}
+                      </h4>
+                      <p style={{ fontSize: '0.85rem', color: '#475569', margin: '0.2rem 0 0 0' }}>
+                        Formula: Total Banta Tha (₹ {currentMonthData.totalPayable.toLocaleString('en-IN')}) - Company Ne Diya (₹ {currentMonthData.totalPaid.toLocaleString('en-IN')})
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="no-print">
+                    <button
+                      type="button"
+                      className="btn btn-secondary"
+                      onClick={() => setActiveViewMonth(null)}
+                      style={{ fontSize: '0.85rem', padding: '0.5rem 1rem', fontWeight: 700 }}
+                    >
+                      ← Back to All Months Scorecard
+                    </button>
+                  </div>
+                </div>
+
+                {/* Printable Official Signatures Block */}
+                <div className="print-only" style={{ marginTop: '3rem', paddingTop: '1.5rem', display: 'flex', justifyContent: 'space-between', padding: '0 2rem' }}>
+                  <div style={{ textAlign: 'center', width: '220px' }}>
+                    <div style={{ borderBottom: '1px solid #0f172a', height: '40px', marginBottom: '0.5rem' }}></div>
+                    <span style={{ fontSize: '0.85rem', fontWeight: 700 }}>Partner Signature ({selectedPartner})</span>
+                  </div>
+                  <div style={{ textAlign: 'center', width: '220px' }}>
+                    <div style={{ borderBottom: '1px solid #0f172a', height: '40px', marginBottom: '0.5rem' }}></div>
+                    <span style={{ fontSize: '0.85rem', fontWeight: 700 }}>Authorized Signatory (DKPT)</span>
+                  </div>
+                </div>
+
+              </div>
+            )
+          )}
         </>
       )}
+
+      {/* ========================================================================= */}
+      {/* POPUP / MODAL: RECORD PAYMENT TO PARTNER                                  */}
+      {/* ========================================================================= */}
+      {showAddPaymentForm && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(15, 23, 42, 0.6)', backdropFilter: 'blur(3px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: '1rem' }}>
+          <div className="glass-card" style={{ width: '100%', maxWidth: '480px', padding: '1.5rem', background: '#ffffff', borderRadius: '0.75rem', boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1)' }}>
+            <h3 style={{ fontSize: '1.15rem', fontWeight: 800, color: '#0f172a', margin: '0 0 0.5rem 0', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+              <CreditCard size={20} style={{ color: '#16a34a' }} /> Record Payment to Partner
+            </h3>
+            <p style={{ fontSize: '0.8rem', color: '#64748b', margin: '0 0 1.25rem 0' }}>
+              Company dwara partner ko chukaye gaye paise (Payment / Reimbursement)
+            </p>
+
+            <form onSubmit={handleSavePayment}>
+              {/* Partner */}
+              <div style={{ marginBottom: '1rem' }}>
+                <label className="input-label" style={{ fontWeight: 600, fontSize: '0.825rem' }}>Partner</label>
+                <input
+                  type="text"
+                  className="input-field"
+                  disabled
+                  value={selectedPartner}
+                  style={{ width: '100%', background: '#f8fafc', fontWeight: 700 }}
+                />
+              </div>
+
+              {/* Target Settlement Month */}
+              <div style={{ marginBottom: '1rem' }}>
+                <label className="input-label" style={{ fontWeight: 600, fontSize: '0.825rem' }}>
+                  Kis Month Ke Hisaab Ke Against Diya? (Target Settlement Month) *
+                </label>
+                <select
+                  className="input-field"
+                  value={newPaymentTargetMonth}
+                  onChange={(e) => setNewPaymentTargetMonth(e.target.value)}
+                  style={{ width: '100%', fontWeight: 600 }}
+                  required
+                >
+                  {availableMonths.map(m => (
+                    <option key={m} value={m}>{formatMonthName(m)} ({m})</option>
+                  ))}
+                </select>
+                <span style={{ fontSize: '0.72rem', color: '#64748b' }}>
+                  Yeh payment is selected month ke settlement me credit hogi.
+                </span>
+              </div>
+
+              {/* Payment Date */}
+              <div style={{ marginBottom: '1rem' }}>
+                <label className="input-label" style={{ fontWeight: 600, fontSize: '0.825rem' }}>
+                  Payment Date (Kis Date Ko Diya?) *
+                </label>
+                <input
+                  type="date"
+                  className="input-field"
+                  value={newPaymentDate}
+                  onChange={(e) => setNewPaymentDate(e.target.value)}
+                  style={{ width: '100%', fontWeight: 600 }}
+                  required
+                />
+              </div>
+
+              {/* Amount */}
+              <div style={{ marginBottom: '1rem' }}>
+                <label className="input-label" style={{ fontWeight: 600, fontSize: '0.825rem' }}>
+                  Payment Amount (₹) *
+                </label>
+                <input
+                  type="number"
+                  step="any"
+                  className="input-field"
+                  placeholder="0.00"
+                  value={newPaymentAmount}
+                  onChange={(e) => setNewPaymentAmount(e.target.value)}
+                  style={{ width: '100%', fontWeight: 700, fontSize: '1rem', color: '#16a34a' }}
+                  required
+                />
+              </div>
+
+              {/* Mode / Remarks */}
+              <div style={{ marginBottom: '1.25rem' }}>
+                <label className="input-label" style={{ fontWeight: 600, fontSize: '0.825rem' }}>
+                  Bank Details / Mode / Remarks
+                </label>
+                <input
+                  type="text"
+                  className="input-field"
+                  placeholder="e.g. Bank Transfer, Malik Creation TRF, Cheque No..."
+                  value={newPaymentMode}
+                  onChange={(e) => setNewPaymentMode(e.target.value)}
+                  style={{ width: '100%' }}
+                />
+              </div>
+
+              {/* Modal Buttons */}
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem' }}>
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={() => setShowAddPaymentForm(false)}
+                  disabled={savingPayment}
+                  style={{ fontSize: '0.85rem' }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="btn btn-primary"
+                  disabled={savingPayment}
+                  style={{ fontSize: '0.85rem', background: '#16a34a', borderColor: '#16a34a' }}
+                >
+                  {savingPayment ? 'Saving...' : 'Save Payment'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 };

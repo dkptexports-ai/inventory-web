@@ -343,6 +343,12 @@ tfoot td {
   color: var(--text-main);
 }
 
+/* Voucher table scrolling in screen view */
+.voucher-table-scroll {
+  max-height: 420px;
+  overflow-y: auto;
+}
+
 /* Print Styles */
 .print-only {
   display: none;
@@ -352,12 +358,14 @@ tfoot td {
   body {
     background-color: white !important;
     color: black !important;
-    font-size: 11pt !important;
+    font-size: 10pt !important;
+    padding: 0 !important;
+    margin: 0 !important;
   }
   .print-only {
     display: block !important;
   }
-  .sidebar, .page-header, .no-print, button, input[type="button"] {
+  .sidebar, .page-header, .no-print, button, input[type="button"], select, .search-box {
     display: none !important;
   }
   .app-container {
@@ -367,6 +375,7 @@ tfoot td {
   }
   .main-content {
     padding: 0 !important;
+    margin: 0 !important;
     overflow: visible !important;
     width: 100% !important;
   }
@@ -374,36 +383,50 @@ tfoot td {
     box-shadow: none !important;
     border: 1px solid #cbd5e1 !important;
     background: white !important;
-    break-inside: avoid;
+    break-inside: auto !important;
+    page-break-inside: auto !important;
     margin-bottom: 1.25rem !important;
     padding: 0.75rem !important;
   }
+  .voucher-table-scroll,
   .table-container {
     box-shadow: none !important;
     border: 1px solid #cbd5e1 !important;
     overflow: visible !important;
+    max-height: none !important;
+    height: auto !important;
+  }
+  thead, tfoot {
+    position: static !important;
   }
   table {
     border-collapse: collapse !important;
     width: 100% !important;
-    page-break-inside: auto;
+    page-break-inside: auto !important;
   }
   tr {
-    page-break-inside: avoid;
-    page-break-after: auto;
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
   }
   td, th {
     color: black !important;
     border: 1px solid #cbd5e1 !important;
-    padding: 0.4rem 0.5rem !important;
+    padding: 0.35rem 0.5rem !important;
   }
   th {
     background-color: #f1f5f9 !important;
     color: #0f172a !important;
     font-weight: 700 !important;
   }
-  h1, h2, h3, p, span {
+  h1, h2, h3, h4, p, span {
     color: black !important;
+  }
+  .settlement-banner {
+    break-inside: avoid !important;
+    page-break-inside: avoid !important;
+    border: 2px solid #0f172a !important;
+    margin-top: 1.25rem !important;
+    padding: 0.75rem 1rem !important;
   }
   .print-input-text {
     display: block !important;

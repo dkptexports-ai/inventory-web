@@ -223,3 +223,7 @@ ALTER TABLE partner_monthly_adjustments ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "Allow public read/write on partner_monthly_adjustments" ON partner_monthly_adjustments;
 CREATE POLICY "Allow public read/write on partner_monthly_adjustments" ON partner_monthly_adjustments FOR ALL USING (true) WITH CHECK (true);
 
+-- Optional settlement month for partner ledger receipts/expenses
+ALTER TABLE partner_ledgers ADD COLUMN IF NOT EXISTS settlement_month TEXT;
+
+
